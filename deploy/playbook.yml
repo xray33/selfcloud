@@ -1,0 +1,10 @@
+---
+- name: Deploy SelfCloud to Ubuntu Linux VPS
+  hosts: vps
+  become: yes
+
+  roles:
+    - docker
+    - mariadb
+    - selfcloud
+    - nginx

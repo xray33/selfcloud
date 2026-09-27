@@ -1,0 +1,41 @@
+---
+- name: Setup containerized MariaDB database
+  when: manage_mariadb | default(true) | bool
+  block:
+    - name: Ensure MariaDB data directory exists on host
+      ansible.builtin.file:
+        path: "{{ db_data_dir }}"
+        state: directory
+        mode: '0750'
+
+    - name: Pull MariaDB Docker image
+      ansible.builtin.command: docker pull mariadb:11
+      changed_when: false
+
+    - name: Deploy SelfCloud MariaDB systemd service unit
+      ansible.builtin.template:
+        src: selfcloud-mariadb.service.j2
+        dest: /etc/systemd/system/selfcloud-mariadb.service
+        mode: '0644'
+      register: mariadb_service
+      no_log: true
+
+    - name: Reload systemd daemon if service changed
+      ansible.builtin.systemd:
+        daemon_reload: yes
+      when: mariadb_service.changed
+
+    - name: Ensure SelfCloud MariaDB service is enabled and started
+      ansible.builtin.systemd:
+        name: selfcloud-mariadb
+        state: started
+        enabled: yes
+
+    - name: Wait for MariaDB to become ready
+      ansible.builtin.command: >
+        docker exec selfcloud-mariadb mariadb-admin ping --silent
+      register: mariadb_ping
+      retries: 20
+      delay: 3
+      until: mariadb_ping.rc == 0
+      changed_when: false

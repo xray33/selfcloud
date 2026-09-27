@@ -1,0 +1,19 @@
+---
+- name: Load Docker images
+  ansible.builtin.shell: |
+    docker load -i /tmp/selfcloud-{{ image_tag | default('latest') }}.tar.gz
+  listen: "Load Docker images"
+
+- name: Restart SelfCloud backend
+  ansible.builtin.systemd:
+    name: selfcloud-backend
+    state: restarted
+    daemon_reload: yes
+  listen: "Restart SelfCloud backend"
+
+- name: Restart SelfCloud web
+  ansible.builtin.systemd:
+    name: selfcloud-web
+    state: restarted
+    daemon_reload: yes
+  listen: "Restart SelfCloud web"

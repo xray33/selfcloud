@@ -1,0 +1,49 @@
+# SelfCloud Installation Configuration (Sample Inventory)
+
+# Domain & Web Proxy Settings
+domain_name: "cloud.example.com"
+enable_ssl: false
+certbot_admin_email: "admin@example.com"
+
+# Internal container port bound to 127.0.0.1 (proxied by host Nginx)
+selfcloud_internal_port: 8080
+
+# Database Management
+# Set to 'true' to deploy containerized MariaDB via systemd; 'false' if connecting to an external DB
+manage_mariadb: true
+db_host: "selfcloud-mariadb"
+db_port: 3306
+db_name: "selfcloud"
+db_user: "selfcloud"
+db_password: "change_me_to_a_secure_password"
+db_root_password: "change_me_to_a_secure_root_password"
+
+# Host Filesystem Directories
+app_dir: "/opt/selfcloud"
+data_dir: "/var/lib/selfcloud/data"
+db_data_dir: "/var/lib/selfcloud/mysql"
+
+# Application Settings
+image_tag: "latest"
+auto_migrate: "true"
+log_level: "info"
+
+# Upload & Security Settings (Optional)
+# max_upload_size_bytes: 10737418240  # 10GB
+# trust_proxy: "true"
+# cookie_secure: "auto"               # or "true" / "false"
+# server_read_timeout: "30m"
+# rate_limit_login_requests: 15
+# rate_limit_login_window: "1m"
+# metrics_auth_token: "secret-metrics-bearer-token"
+
+# Optional Google OAuth2 SSO
+sso_google_client_id: ""
+sso_google_client_secret: ""
+sso_redirect_base_url: ""
+
+# Initial Users to Provision on Setup (empty by default)
+selfcloud_users:
+  - username: "username"
+    password: "change_this_user_password"
+    email: "john.doe@example.com"

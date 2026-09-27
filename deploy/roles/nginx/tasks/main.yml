@@ -1,0 +1,87 @@
+---
+- name: Install Nginx and Certbot packages
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+    update_cache: yes
+
+- name: Create Certbot webroot challenge directory
+  ansible.builtin.file:
+    path: /var/www/certbot
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+- name: Remove default Nginx site configuration
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload Nginx
+
+- name: Check if SSL certificate already exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ domain_name }}/fullchain.pem"
+  register: ssl_cert
+
+- name: Deploy SelfCloud Nginx virtual host configuration
+  ansible.builtin.template:
+    src: selfcloud-vhost.conf.j2
+    dest: /etc/nginx/sites-available/selfcloud.conf
+    mode: '0644'
+  notify: Reload Nginx
+
+- name: Enable SelfCloud virtual host
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/selfcloud.conf
+    dest: /etc/nginx/sites-enabled/selfcloud.conf
+    state: link
+  notify: Reload Nginx
+
+- name: Ensure Nginx service is enabled and started
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Flush handlers to ensure Nginx is reloaded with ACME challenge configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Obtain Let's Encrypt SSL certificate if enabled
+  when: enable_ssl | default(false) | bool and domain_name != "localhost"
+  block:
+    - name: Obtain certificate via Certbot webroot
+      ansible.builtin.command: >
+        certbot certonly --webroot -w /var/www/certbot -d {{ domain_name }} --non-interactive --agree-tos -m {{ certbot_admin_email }}
+      when: not ssl_cert.stat.exists
+
+    - name: Re-deploy SelfCloud Nginx virtual host configuration with SSL enabled
+      ansible.builtin.template:
+        src: selfcloud-vhost.conf.j2
+        dest: /etc/nginx/sites-available/selfcloud.conf
+        mode: '0644'
+      vars:
+        ssl_cert_installed: true
+      when: not ssl_cert.stat.exists
+      notify: Reload Nginx
+
+    - name: Ensure Certbot reload hook directory exists
+      ansible.builtin.file:
+        path: /etc/letsencrypt/renewal-hooks/deploy
+        state: directory
+        mode: '0755'
+
+    - name: Configure automatic Nginx reload on certificate renewal
+      ansible.builtin.copy:
+        dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+        content: |
+          #!/bin/sh
+          systemctl reload nginx
+        mode: '0755'
+
+    - name: Flush handlers to activate SSL configuration immediately
+      ansible.builtin.meta: flush_handlers
+      when: not ssl_cert.stat.exists

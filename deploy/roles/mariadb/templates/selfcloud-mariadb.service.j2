@@ -1,0 +1,23 @@
+[Unit]
+Description=SelfCloud MariaDB Database Container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStartPre=-/usr/bin/docker stop selfcloud-mariadb
+ExecStartPre=-/usr/bin/docker rm selfcloud-mariadb
+ExecStart=/usr/bin/docker run --name selfcloud-mariadb \
+  --network selfcloud-net \
+  -e MYSQL_ROOT_PASSWORD={{ db_root_password }} \
+  -e MYSQL_DATABASE={{ db_name }} \
+  -e MYSQL_USER={{ db_user }} \
+  -e MYSQL_PASSWORD={{ db_password }} \
+  -v {{ db_data_dir }}:/var/lib/mysql \
+  mariadb:11
+ExecStop=/usr/bin/docker stop -t 15 selfcloud-mariadb
+
+[Install]
+WantedBy=multi-user.target

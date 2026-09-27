@@ -1,0 +1,23 @@
+# Go binaries & build artifacts
+bin/
+coverage.out
+coverage.html
+
+# Local storage data
+data/
+
+# Web UI build outputs & node_modules
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS & Environment
+.DS_Store
+*.log
+.env
+.env.local
+.go-version
+
+# Ansible private inventories (preserve sample template)
+deploy/inventories.local/*
+!deploy/inventories.local/sample/

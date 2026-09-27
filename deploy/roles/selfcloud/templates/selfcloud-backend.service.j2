@@ -1,0 +1,21 @@
+[Unit]
+Description=SelfCloud Go Backend Service Container
+Requires=docker.service
+After=docker.service {% if manage_mariadb | default(true) | bool %}selfcloud-mariadb.service{% endif %}
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStartPre=-/usr/bin/docker stop selfcloud-backend
+ExecStartPre=-/usr/bin/docker rm selfcloud-backend
+ExecStart=/usr/bin/docker run --name selfcloud-backend \
+  --network selfcloud-net \
+  --env-file /etc/selfcloud/selfcloud.env \
+  -v {{ data_dir }}:/var/lib/selfcloud/data \
+  selfcloud-backend:{{ image_tag | default('latest') }} \
+  serve
+ExecStop=/usr/bin/docker stop -t 10 selfcloud-backend
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# Python dependencies for Ansible controller
+ansible-core>=2.16.0
+requests>=2.31.0
+cryptography>=42.0.0
+docker>=7.0.0

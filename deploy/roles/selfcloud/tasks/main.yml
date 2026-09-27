@@ -1,0 +1,87 @@
+---
+- name: Ensure SelfCloud host directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ app_dir }}"
+    - "/etc/selfcloud"
+
+- name: Ensure SelfCloud data directory exists with correct non-root permissions
+  ansible.builtin.file:
+    path: "{{ data_dir }}"
+    state: directory
+    owner: "10001"
+    group: "10001"
+    mode: '0750'
+
+- name: Copy Docker images archive to VPS
+  ansible.builtin.copy:
+    src: "/tmp/selfcloud-build/selfcloud-{{ image_tag | default('latest') }}.tar.gz"
+    dest: "/tmp/selfcloud-{{ image_tag | default('latest') }}.tar.gz"
+    mode: '0644'
+  notify:
+    - Load Docker images
+    - Restart SelfCloud backend
+    - Restart SelfCloud web
+
+- name: Deploy SelfCloud environment configuration file
+  ansible.builtin.template:
+    src: selfcloud.env.j2
+    dest: /etc/selfcloud/selfcloud.env
+    mode: '0600'
+  no_log: true
+  notify:
+    - Restart SelfCloud backend
+
+- name: Deploy SelfCloud backend systemd service unit
+  ansible.builtin.template:
+    src: selfcloud-backend.service.j2
+    dest: /etc/systemd/system/selfcloud-backend.service
+    mode: '0644'
+  notify:
+    - Restart SelfCloud backend
+
+- name: Deploy SelfCloud web UI systemd service unit
+  ansible.builtin.template:
+    src: selfcloud-web.service.j2
+    dest: /etc/systemd/system/selfcloud-web.service
+    mode: '0644'
+  notify:
+    - Restart SelfCloud web
+
+- name: Flush handlers to load images and start services before user provisioning
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure SelfCloud backend service is enabled and started
+  ansible.builtin.systemd:
+    name: selfcloud-backend
+    state: started
+    enabled: yes
+
+- name: Ensure SelfCloud web UI service is enabled and started
+  ansible.builtin.systemd:
+    name: selfcloud-web
+    state: started
+    enabled: yes
+
+- name: Wait for backend service to be ready for CLI commands
+  ansible.builtin.command: >
+    docker exec selfcloud-backend /app/selfcloud user list
+  register: cli_check
+  retries: 15
+  delay: 2
+  until: cli_check.rc == 0
+  changed_when: false
+  when: selfcloud_users is defined and selfcloud_users | length > 0
+
+- name: Provision configured initial users via CLI
+  ansible.builtin.command: >
+    docker exec -e SELFCLOUD_USER_PASSWORD='{{ item.password }}' selfcloud-backend /app/selfcloud user create {{ item.username }} "" {{ item.email | default('') }} --update-if-exists
+  register: user_create_res
+  changed_when: "'created successfully' in user_create_res.stdout or 'updated successfully' in user_create_res.stdout"
+  loop: "{{ selfcloud_users | default([]) }}"
+  loop_control:
+    label: "{{ item.username }}"
+  no_log: true

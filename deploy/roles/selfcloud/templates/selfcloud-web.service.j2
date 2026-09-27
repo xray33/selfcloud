@@ -1,0 +1,19 @@
+[Unit]
+Description=SelfCloud Web UI & Static Nginx Container
+Requires=docker.service selfcloud-backend.service
+After=docker.service selfcloud-backend.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5s
+ExecStartPre=-/usr/bin/docker stop selfcloud-web
+ExecStartPre=-/usr/bin/docker rm selfcloud-web
+ExecStart=/usr/bin/docker run --name selfcloud-web \
+  --network selfcloud-net \
+  -p 127.0.0.1:{{ selfcloud_internal_port | default(8080) }}:80 \
+  selfcloud-web:{{ image_tag | default('latest') }}
+ExecStop=/usr/bin/docker stop -t 10 selfcloud-web
+
+[Install]
+WantedBy=multi-user.target
