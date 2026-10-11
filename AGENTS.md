@@ -55,7 +55,8 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 - `/`: Single-binary serving of compiled React Web UI static assets (`web/dist`).
 
 ## 5. Development & Testing Commands
-- **Linting**: Run `make lint` (Go linter) and `make ui-build` (React typecheck & build).
+- **CI & Pre-Commit Check**: Run `make ci` (runs Go lint, Go tests, UI lint, UI build, and backend build).
+- **Linting**: Run `make lint` (Go linter) and `make ui-lint` / `make ui-build` (React typecheck & build).
 - **Tests**: Run `make test` (runs unit & functional tests against MariaDB configured via `DB_DSN`).
 - **Build**: Run `make build` (compiles `bin/selfcloud`) and `make ui-build` (builds `web/dist`).
 - **Docker Targets**:

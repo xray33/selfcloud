@@ -2,6 +2,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![React Version](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react)](https://react.dev/)
+[![CI](https://github.com/xray33/selfcloud/actions/workflows/ci.yml/badge.svg)](https://github.com/xray33/selfcloud/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **SelfCloud** is a lightweight, high-performance, 100% ownCloud-compatible WebDAV backend server and modern Web UI written in Go and React.

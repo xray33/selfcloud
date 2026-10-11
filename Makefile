@@ -1,4 +1,4 @@
-.PHONY: all lint test test-coverage build docker-build docker-build-backend docker-build-web docker-up docker-down docker-logs docker-clean up-db down-db clean
+.PHONY: all lint test test-coverage build docker-build docker-build-backend docker-build-web docker-up docker-down docker-logs docker-clean up-db down-db clean ui-install ui-build ui-lint ui-dev ci check
 
 ENV_PATH := PATH="$(HOME)/.goenv/shims:/opt/homebrew/bin:/usr/local/bin:$(PATH)"
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "latest")
@@ -11,6 +11,8 @@ BUILD_DATE  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS     := -X main.buildVersion=$(IMAGE_TAG) -X main.buildCommit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)
 
 all: lint test build
+
+ci: lint test ui-lint ui-build build
 
 lint:
 	$(ENV_PATH) golangci-lint run ./...
@@ -59,8 +61,13 @@ ui-install:
 ui-build:
 	$(MAKE) -C web build
 
+ui-lint:
+	$(MAKE) -C web lint
+
 ui-dev:
 	$(MAKE) -C web dev
+
+check: ci
 
 clean:
 	rm -rf bin/
