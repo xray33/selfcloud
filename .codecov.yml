@@ -1,0 +1,27 @@
+# Codecov configuration
+# Reference: https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  precision: 1
+  round: down
+  range: "50...90"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        target: auto
+        threshold: 2%
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "cmd/**/*"      # CLI entry points (serve, migrate, user, reindex CLI flags)
+  - "deploy/**/*"   # Ansible deployment playbooks & templates
+  - "web/**/*"      # React frontend (tested independently)
+  - "test/**/*"     # Integration test helpers
