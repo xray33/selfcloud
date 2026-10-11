@@ -60,7 +60,7 @@ jobs:
         env:
           DB_DSN: "selfcloud:selfcloud_pass@tcp(127.0.0.1:3306)/selfcloud?parseTime=true"
         run: |
-          go test -v -race -coverprofile=coverage.out ./...
+          go test -v -race -coverpkg=./internal/... -coverprofile=coverage.out ./...
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
