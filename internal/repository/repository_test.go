@@ -145,7 +145,7 @@ func TestRepositoryOperations(t *testing.T) {
 		t.Errorf("expected name child.txt, got %s", newFile.Name)
 	}
 
-	// 3. Share Repository with ExpiresAt
+	// 3. Share Repository with ExpiresAt & ListByUserID
 	expiresAt := time.Now().Add(24 * time.Hour)
 	share := &domain.Share{
 		Token:     "share_token_repo_test",
@@ -169,14 +169,103 @@ func TestRepositoryOperations(t *testing.T) {
 		t.Errorf("share should not be expired yet")
 	}
 
-	// 4. Clean up user cascades
+	shareByPath, err := repos.Shares.GetByPath(ctx, fetchedUser.ID, "/folderB/child.txt")
+	if err != nil || shareByPath == nil {
+		t.Fatalf("GetByPath share failed: %v", err)
+	}
+
+	userShares, err := repos.Shares.ListByUserID(ctx, fetchedUser.ID)
+	if err != nil || len(userShares) != 1 {
+		t.Fatalf("expected 1 share for user, got %d (err: %v)", len(userShares), err)
+	}
+
+	// 4. Session Repository
+	session := &domain.Session{
+		Token:     "sess_token_repo_test",
+		UserID:    fetchedUser.ID,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+		CreatedAt: time.Now(),
+	}
+	if err := repos.Sessions.Create(ctx, session); err != nil {
+		t.Fatalf("Create session failed: %v", err)
+	}
+
+	fetchedSess, err := repos.Sessions.GetByToken(ctx, "sess_token_repo_test")
+	if err != nil || fetchedSess == nil {
+		t.Fatalf("GetByToken session failed: %v", err)
+	}
+
+	expiredSess := &domain.Session{
+		Token:     "sess_token_expired",
+		UserID:    fetchedUser.ID,
+		ExpiresAt: time.Now().Add(-1 * time.Hour),
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+	}
+	if err := repos.Sessions.Create(ctx, expiredSess); err != nil {
+		t.Fatalf("Create expired session failed: %v", err)
+	}
+	deletedCount, err := repos.Sessions.DeleteExpired(ctx)
+	if err != nil || deletedCount == 0 {
+		t.Errorf("expected DeleteExpired to delete sessions, got count %d (err: %v)", deletedCount, err)
+	}
+
+	if err := repos.Sessions.DeleteByToken(ctx, "sess_token_repo_test"); err != nil {
+		t.Errorf("DeleteByToken failed: %v", err)
+	}
+
+	// 5. Identity Repository
+	identity := &domain.UserIdentity{
+		UserID:         fetchedUser.ID,
+		Provider:       "google",
+		ProviderUserID: "goog_12345",
+		Email:          "repo_test@example.com",
+		CreatedAt:      time.Now(),
+	}
+	if err := repos.Identities.Create(ctx, identity); err != nil {
+		t.Fatalf("Create identity failed: %v", err)
+	}
+
+	fetchedIdent, err := repos.Identities.GetByProviderUID(ctx, "google", "goog_12345")
+	if err != nil || fetchedIdent == nil {
+		t.Fatalf("GetByProviderUID failed: %v", err)
+	}
+
+	idents, err := repos.Identities.ListByUserID(ctx, fetchedUser.ID)
+	if err != nil || len(idents) != 1 {
+		t.Fatalf("expected 1 identity for user, got %d (err: %v)", len(idents), err)
+	}
+
+	// 6. User Repository: GetByEmail, GetByID, ListAll
+	userByEmail, err := repos.Users.GetByEmail(ctx, "updated_email@example.com")
+	if err != nil || userByEmail == nil {
+		t.Errorf("GetByEmail failed: %v", err)
+	}
+	userByID, err := repos.Users.GetByID(ctx, fetchedUser.ID)
+	if err != nil || userByID == nil {
+		t.Errorf("GetByID failed: %v", err)
+	}
+	allUsers, err := repos.Users.ListAll(ctx)
+	if err != nil || len(allUsers) == 0 {
+		t.Errorf("ListAll failed: %v", err)
+	}
+
+	// 7. Delete Share directly
+	if err := repos.Shares.DeleteByToken(ctx, "share_token_repo_test", fetchedUser.ID); err != nil {
+		t.Errorf("DeleteByToken share failed: %v", err)
+	}
+
+	// 8. Clean up user cascades
 	if err := repos.Users.Delete(ctx, testUsername); err != nil {
 		t.Fatalf("Delete user failed: %v", err)
 	}
 
-	// Ensure cascade deleted nodes and shares
+	// Ensure cascade deleted nodes, sessions, identities
 	postDeleteNode, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/folderB")
 	if postDeleteNode != nil {
 		t.Errorf("expected node to be deleted by cascade, found %v", postDeleteNode)
+	}
+	postDeleteIdent, _ := repos.Identities.GetByProviderUID(ctx, "google", "goog_12345")
+	if postDeleteIdent != nil {
+		t.Errorf("expected identity to be deleted by cascade, found %v", postDeleteIdent)
 	}
 }

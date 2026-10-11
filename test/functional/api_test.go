@@ -541,6 +541,32 @@ func TestFilesAndSharesAPIWorkflow(t *testing.T) {
 		t.Errorf("unexpected public shared content: %s", string(publicContent))
 	}
 
+	// 8b. Authenticated share listing: GET /api/v1/shares
+	resp, err = client.Get(server.URL + "/api/v1/shares")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/shares failed: %v, status: %d", err, resp.StatusCode)
+	}
+	sharesListBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(sharesListBody), shareRes.Share.Token) {
+		t.Errorf("expected GET /api/v1/shares to include token %s, got: %s", shareRes.Share.Token, string(sharesListBody))
+	}
+
+	// 8c. Authenticated share revocation: DELETE /api/v1/shares?token=...
+	revokeReq, _ := http.NewRequest("DELETE", server.URL+"/api/v1/shares?token="+shareRes.Share.Token, nil)
+	resp, err = client.Do(revokeReq)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /api/v1/shares failed: %v, status: %d", err, resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Verify share is gone from public info
+	resp, err = anonClient.Get(server.URL + "/api/v1/public/shares?token=" + shareRes.Share.Token)
+	if err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for revoked share, got status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
 	// 9. DELETE /api/v1/files?path=/documents -> recursive delete
 	req, _ = http.NewRequest("DELETE", server.URL+"/api/v1/files?path=/documents", nil)
 	resp, err = client.Do(req)
