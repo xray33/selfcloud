@@ -47,15 +47,18 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	userRepo := repository.NewUserRepository(sqlDB)
 	nodeRepo := repository.NewNodeRepository(sqlDB)
 
+	hash, _ := domain.HashPassword("admin")
 	adminUser, _ := userRepo.GetByUsername(ctx, "admin")
 	if adminUser == nil {
-		hash, _ := domain.HashPassword("admin")
 		adminUser = &domain.User{Username: "admin", PasswordHash: hash, Email: "admin@selfcloud.local"}
 		_ = userRepo.Create(ctx, adminUser)
 		_ = nodeRepo.Create(ctx, &domain.Node{
 			UserID: adminUser.ID, Path: "/", ParentPath: "", Name: "", IsDir: true,
 			ETag: "root_etag", FileID: "00000001oc_root", MTime: time.Now(), ContentType: "httpd/unix-directory",
 		})
+	} else {
+		adminUser.PasswordHash = hash
+		_ = userRepo.Update(ctx, adminUser)
 	}
 	tempStorage, err := os.MkdirTemp("", "selfcloud_fn_test_*")
 	if err != nil {
@@ -227,6 +230,24 @@ func TestFullSelfCloudWorkflow(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		t.Errorf("expected 201 or 204 for MOVE, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 8b. OPTIONS /remote.php/webdav/
+	req, _ = http.NewRequest("OPTIONS", server.URL+"/remote.php/webdav/", nil)
+	req.SetBasicAuth("admin", "admin")
+	resp, err = client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK from OPTIONS, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 8c. PROPPATCH /remote.php/webdav/myfolder/hello_moved.txt
+	req, _ = http.NewRequest("PROPPATCH", server.URL+"/remote.php/webdav/myfolder/hello_moved.txt", strings.NewReader("<propertyupdate/>"))
+	req.SetBasicAuth("admin", "admin")
+	resp, err = client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusMultiStatus {
+		t.Errorf("expected 207 Multi-Status from PROPPATCH, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 

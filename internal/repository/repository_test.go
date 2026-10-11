@@ -145,6 +145,31 @@ func TestRepositoryOperations(t *testing.T) {
 		t.Errorf("expected name child.txt, got %s", newFile.Name)
 	}
 
+	// Test Node Update
+	newFile.Size = 999
+	newFile.ETag = "updated_etag"
+	if err := repos.Nodes.Update(ctx, newFile); err != nil {
+		t.Errorf("Update node failed: %v", err)
+	}
+
+	// Test Node Delete
+	tempNode := &domain.Node{
+		UserID:      fetchedUser.ID,
+		Path:        "/folderB/temp.txt",
+		ParentPath:  "/folderB",
+		Name:        "temp.txt",
+		IsDir:       false,
+		Size:        10,
+		ETag:        "temp_etag",
+		FileID:      "temp_id",
+		MTime:       time.Now(),
+		ContentType: "text/plain",
+	}
+	_ = repos.Nodes.Create(ctx, tempNode)
+	if err := repos.Nodes.Delete(ctx, fetchedUser.ID, "/folderB/temp.txt"); err != nil {
+		t.Errorf("Delete node failed: %v", err)
+	}
+
 	// 3. Share Repository with ExpiresAt & ListByUserID
 	expiresAt := time.Now().Add(24 * time.Hour)
 	share := &domain.Share{
@@ -211,6 +236,18 @@ func TestRepositoryOperations(t *testing.T) {
 
 	if err := repos.Sessions.DeleteByToken(ctx, "sess_token_repo_test"); err != nil {
 		t.Errorf("DeleteByToken failed: %v", err)
+	}
+
+	// Test DeleteByUserID
+	sessForUser := &domain.Session{
+		Token:     "sess_token_for_user",
+		UserID:    fetchedUser.ID,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+		CreatedAt: time.Now(),
+	}
+	_ = repos.Sessions.Create(ctx, sessForUser)
+	if err := repos.Sessions.DeleteByUserID(ctx, fetchedUser.ID); err != nil {
+		t.Errorf("DeleteByUserID failed: %v", err)
 	}
 
 	// 5. Identity Repository
