@@ -193,6 +193,45 @@ func Migrate(db *sql.DB) error {
 				return nil
 			},
 		},
+		{
+			version:     4,
+			description: "Create oauth_auth_codes and oauth_tokens tables for OAuth2/OIDC support",
+			run: func(db *sql.DB) error {
+				queries := []string{
+					`CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+						code VARCHAR(128) PRIMARY KEY,
+						client_id VARCHAR(255) NOT NULL,
+						user_id BIGINT NOT NULL,
+						redirect_uri VARCHAR(1024) NOT NULL,
+						code_challenge VARCHAR(255) NOT NULL DEFAULT '',
+						code_challenge_method VARCHAR(32) NOT NULL DEFAULT '',
+						scope VARCHAR(255) NOT NULL DEFAULT '',
+						expires_at DATETIME NOT NULL,
+						created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						CONSTRAINT fk_oauth_codes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+					) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+
+					`CREATE TABLE IF NOT EXISTS oauth_tokens (
+						id BIGINT AUTO_INCREMENT PRIMARY KEY,
+						client_id VARCHAR(255) NOT NULL,
+						user_id BIGINT NOT NULL,
+						access_token VARCHAR(255) NOT NULL UNIQUE,
+						refresh_token VARCHAR(255) NOT NULL UNIQUE,
+						access_token_expires_at DATETIME NOT NULL,
+						refresh_token_expires_at DATETIME NOT NULL,
+						created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						CONSTRAINT fk_oauth_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+					) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+				}
+
+				for _, q := range queries {
+					if _, err := db.Exec(q); err != nil {
+						return fmt.Errorf("migration query failed: %w", err)
+					}
+				}
+				return nil
+			},
+		},
 	}
 
 	for _, m := range migrations {

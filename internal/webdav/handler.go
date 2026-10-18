@@ -29,6 +29,7 @@ type WebDAVHandler struct {
 	storage       storage.Storage
 	logger        *slog.Logger
 	maxUploadSize int64
+	wwwAuthHeader string
 }
 
 func NewWebDAVHandler(transactor repository.Transactor, nodeRepo repository.NodeRepository, storage storage.Storage, logger *slog.Logger) *WebDAVHandler {
@@ -44,6 +45,13 @@ func NewWebDAVHandler(transactor repository.Transactor, nodeRepo repository.Node
 func (h *WebDAVHandler) WithMaxUploadSize(size int64) *WebDAVHandler {
 	if size > 0 {
 		h.maxUploadSize = size
+	}
+	return h
+}
+
+func (h *WebDAVHandler) WithWWWAuthenticateHeader(header string) *WebDAVHandler {
+	if header != "" {
+		h.wwwAuthHeader = header
 	}
 	return h
 }
@@ -78,7 +86,11 @@ func (rec *webdavStatusRecorder) Flush() {
 func (h *WebDAVHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserFromContext(r.Context())
 	if user == nil {
-		w.Header().Set("WWW-Authenticate", `Basic realm="selfcloud"`)
+		authHdr := h.wwwAuthHeader
+		if authHdr == "" {
+			authHdr = `Bearer realm="selfcloud", Basic realm="selfcloud"`
+		}
+		w.Header().Set("WWW-Authenticate", authHdr)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

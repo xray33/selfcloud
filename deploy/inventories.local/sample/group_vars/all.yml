@@ -36,6 +36,7 @@ log_level: "info"
 # rate_limit_login_requests: 15
 # rate_limit_login_window: "1m"
 # metrics_auth_token: "secret-metrics-bearer-token"
+# auth_methods: "basic,oauth"         # Supported: "basic,oauth", "basic", or "oauth" (use "basic" for plain HTTP setups without TLS)
 
 # Optional Google OAuth2 SSO
 sso_google_client_id: ""

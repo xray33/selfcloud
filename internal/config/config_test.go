@@ -32,6 +32,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.RateLimitLoginRequests != 15 {
 		t.Errorf("expected default RateLimitLoginRequests 15, got %d", cfg.RateLimitLoginRequests)
 	}
+	if cfg.EnableSpaces {
+		t.Errorf("expected default EnableSpaces false, got %v", cfg.EnableSpaces)
+	}
 }
 
 func TestLoadConfigEnvOverrides(t *testing.T) {
@@ -84,3 +87,54 @@ func TestLoadConfigEnvOverrides(t *testing.T) {
 		t.Errorf("expected RateLimitLoginRequests 30, got %d", cfg.RateLimitLoginRequests)
 	}
 }
+
+func TestAuthMethodsConfig(t *testing.T) {
+	t.Run("Default configuration enables both basic and oauth", func(t *testing.T) {
+		cfg := LoadConfig()
+		if !cfg.IsBasicAuthEnabled() {
+			t.Errorf("expected Basic auth to be enabled by default")
+		}
+		if !cfg.IsOAuthEnabled() {
+			t.Errorf("expected OAuth to be enabled by default")
+		}
+		expectedHdr := `Bearer realm="selfcloud", Basic realm="selfcloud"`
+		if cfg.WWWAuthenticateHeader() != expectedHdr {
+			t.Errorf("expected header %q, got %q", expectedHdr, cfg.WWWAuthenticateHeader())
+		}
+	})
+
+	t.Run("Basic only configuration", func(t *testing.T) {
+		os.Setenv("AUTH_METHODS", "basic")
+		defer os.Unsetenv("AUTH_METHODS")
+
+		cfg := LoadConfig()
+		if !cfg.IsBasicAuthEnabled() {
+			t.Errorf("expected Basic auth enabled")
+		}
+		if cfg.IsOAuthEnabled() {
+			t.Errorf("expected OAuth disabled")
+		}
+		expectedHdr := `Basic realm="selfcloud"`
+		if cfg.WWWAuthenticateHeader() != expectedHdr {
+			t.Errorf("expected header %q, got %q", expectedHdr, cfg.WWWAuthenticateHeader())
+		}
+	})
+
+	t.Run("OAuth only configuration", func(t *testing.T) {
+		os.Setenv("AUTH_METHODS", "oauth")
+		defer os.Unsetenv("AUTH_METHODS")
+
+		cfg := LoadConfig()
+		if cfg.IsBasicAuthEnabled() {
+			t.Errorf("expected Basic auth disabled")
+		}
+		if !cfg.IsOAuthEnabled() {
+			t.Errorf("expected OAuth enabled")
+		}
+		expectedHdr := `Bearer realm="selfcloud"`
+		if cfg.WWWAuthenticateHeader() != expectedHdr {
+			t.Errorf("expected header %q, got %q", expectedHdr, cfg.WWWAuthenticateHeader())
+		}
+	})
+}
+

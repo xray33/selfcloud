@@ -4,13 +4,25 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"selfcloud/internal/config"
 	"selfcloud/internal/middleware"
 )
 
-type OCSHandler struct{}
+type OCSHandler struct {
+	cfg *config.Config
+}
 
-func NewOCSHandler() *OCSHandler {
-	return &OCSHandler{}
+func NewOCSHandler(cfgs ...*config.Config) *OCSHandler {
+	h := &OCSHandler{}
+	if len(cfgs) > 0 {
+		h.cfg = cfgs[0]
+	}
+	return h
+}
+
+func (h *OCSHandler) WithConfig(cfg *config.Config) *OCSHandler {
+	h.cfg = cfg
+	return h
 }
 
 func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +42,36 @@ func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
 func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
+	oauthEnabled := true
+	spacesEnabled := false
+	if h.cfg != nil {
+		oauthEnabled = h.cfg.IsOAuthEnabled()
+		spacesEnabled = h.cfg.EnableSpaces
+	}
+
+	caps := map[string]any{
+		"core": map[string]any{
+			"pollinterval": 60,
+			"webdav-root":  "remote.php/webdav",
+		},
+		"files": map[string]any{
+			"bigfilechunking": false,
+			"undelete":        false,
+			"versioning":      false,
+		},
+		"oauth2": map[string]any{
+			"enabled": oauthEnabled,
+		},
+	}
+
+	if spacesEnabled {
+		caps["spaces"] = map[string]any{
+			"enabled":                      true,
+			"has_multiple_personal_spaces": false,
+			"version":                      "1.0.0",
+		}
+	}
+
 	resp := map[string]any{
 		"ocs": map[string]any{
 			"meta": map[string]any{
@@ -45,17 +87,7 @@ func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request)
 					"string":  "10.11.0",
 					"edition": "Community",
 				},
-				"capabilities": map[string]any{
-					"core": map[string]any{
-						"pollinterval": 60,
-						"webdav-root":  "remote.php/webdav",
-					},
-					"files": map[string]any{
-						"bigfilechunking": false,
-						"undelete":        false,
-						"versioning":      false,
-					},
-				},
+				"capabilities": caps,
 			},
 		},
 	}

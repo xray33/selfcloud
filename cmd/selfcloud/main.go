@@ -557,8 +557,10 @@ func cmdServe() {
 		os.Exit(1)
 	}
 
-	ocsHandler := ocs.NewOCSHandler()
-	webdavHandler := webdav.NewWebDAVHandler(transactor, repos.Nodes, localStorage, logger).WithMaxUploadSize(cfg.MaxUploadSize)
+	ocsHandler := ocs.NewOCSHandler(cfg)
+	webdavHandler := webdav.NewWebDAVHandler(transactor, repos.Nodes, localStorage, logger).
+		WithMaxUploadSize(cfg.MaxUploadSize).
+		WithWWWAuthenticateHeader(cfg.WWWAuthenticateHeader())
 	authHandler := api.NewAuthHandler(repos.Users, repos.Sessions, logger).
 		WithIdentityRepo(repos.Identities).
 		WithConfig(cfg)
@@ -566,6 +568,8 @@ func cmdServe() {
 	sharesHandler := api.NewSharesHandler(transactor, repos.Shares, repos.Nodes, repos.Users, localStorage, logger)
 	systemHandler := api.NewSystemHandler(buildVersion, buildCommit, buildDate)
 	ssoHandler := api.NewSSOHandler(cfg, transactor, repos.Users, repos.Sessions, repos.Nodes, repos.Identities, logger)
+	oauthHandler := api.NewOAuthHandler(repos.OAuth, repos.Users, repos.Sessions, logger)
+	graphHandler := api.NewGraphHandler(repos.Users, repos.Nodes)
 
 	mux := http.NewServeMux()
 
@@ -590,11 +594,26 @@ func cmdServe() {
 	mux.Handle("GET /metrics", metricsHandler)
 	mux.HandleFunc("GET /status.php", ocsHandler.StatusHandler)
 
+	// OpenID Connect Discovery & OAuth2 Endpoints for ownCloud Sync Clients (Desktop and Mobile)
+	mux.HandleFunc("GET /.well-known/webfinger", oauthHandler.WebFingerHandler)
+	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.OpenIDConfigurationHandler)
+	mux.HandleFunc("GET /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("GET /index.php/apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /index.php/apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("GET /apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("GET /index.php/status.php", ocsHandler.StatusHandler)
+
 	sessionAuthWrapper := middleware.RequireSessionAuthMiddleware(repos.Sessions, repos.Users)
 	middleware.ConfigureSecurity(cfg.TrustProxy, cfg.CookieSecure)
 
 	loginRateLimiter := middleware.NewIPRateLimiter(cfg.RateLimitLoginRequests, cfg.RateLimitLoginWindow)
 	defer loginRateLimiter.Close()
+
+	mux.Handle("POST /api/v1/auth/oauth2/token", loginRateLimiter.LimitMiddleware(http.HandlerFunc(oauthHandler.TokenHandler)))
+	mux.Handle("POST /index.php/apps/oauth2/api/v1/token", loginRateLimiter.LimitMiddleware(http.HandlerFunc(oauthHandler.TokenHandler)))
+	mux.Handle("POST /apps/oauth2/api/v1/token", loginRateLimiter.LimitMiddleware(http.HandlerFunc(oauthHandler.TokenHandler)))
 
 	// REST System Info Endpoint
 	mux.HandleFunc("GET /api/v1/system/info", systemHandler.SystemInfoHandler)
@@ -639,7 +658,12 @@ func cmdServe() {
 		sharesHandler.PublicShareInfoHandler(w, r)
 	})
 
-	authWrapper := middleware.BasicAuthMiddleware(repos.Users, loginRateLimiter)
+	authWrapper := middleware.DualAuthMiddleware(repos.Users, repos.Sessions, cfg, loginRateLimiter)
+
+	// Microsoft Graph API for ownCloud Infinite Scale Spaces discovery (opt-in)
+	if cfg.EnableSpaces {
+		mux.Handle("GET /graph/v1.0/me/drives", authWrapper(http.HandlerFunc(graphHandler.MeDrivesHandler)))
+	}
 
 	mux.Handle("GET /ocs/v1.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))
 	mux.Handle("GET /ocs/v2.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))
