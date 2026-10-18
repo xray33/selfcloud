@@ -619,7 +619,7 @@ func TestFilesAndSharesAPIWorkflow(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestOwnCloudClientV7Workflow(t *testing.T) {
+func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 	server, cleanup := setupTestServer(t)
 	if server == nil {
 		return
@@ -822,22 +822,22 @@ func TestOwnCloudClientV7Workflow(t *testing.T) {
 	}
 	davPropResp.Body.Close()
 
-	// 8b. PUT /remote.php/webdav/client7_test.txt
-	putContent := "Hello from ownCloud Client 7 sync engine!"
-	putReq, _ := http.NewRequest("PUT", server.URL+"/remote.php/webdav/client7_test.txt", strings.NewReader(putContent))
+	// 8b. PUT /remote.php/webdav/client_sync_test.txt
+	putContent := "Hello from ownCloud Desktop Client sync engine!"
+	putReq, _ := http.NewRequest("PUT", server.URL+"/remote.php/webdav/client_sync_test.txt", strings.NewReader(putContent))
 	putReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 	putResp, err := client.Do(putReq)
 	if err != nil || (putResp.StatusCode != http.StatusCreated && putResp.StatusCode != http.StatusNoContent) {
-		t.Fatalf("PUT /remote.php/webdav/client7_test.txt failed: %v, status: %d", err, putResp.StatusCode)
+		t.Fatalf("PUT /remote.php/webdav/client_sync_test.txt failed: %v, status: %d", err, putResp.StatusCode)
 	}
 	putResp.Body.Close()
 
-	// 8c. GET /remote.php/webdav/client7_test.txt
-	getReq, _ := http.NewRequest("GET", server.URL+"/remote.php/webdav/client7_test.txt", nil)
+	// 8c. GET /remote.php/webdav/client_sync_test.txt
+	getReq, _ := http.NewRequest("GET", server.URL+"/remote.php/webdav/client_sync_test.txt", nil)
 	getReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 	getResp, err := client.Do(getReq)
 	if err != nil || getResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /remote.php/webdav/client7_test.txt failed: %v, status: %d", err, getResp.StatusCode)
+		t.Fatalf("GET /remote.php/webdav/client_sync_test.txt failed: %v, status: %d", err, getResp.StatusCode)
 	}
 	getBody, _ := io.ReadAll(getResp.Body)
 	getResp.Body.Close()

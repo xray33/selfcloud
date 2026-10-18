@@ -58,5 +58,5 @@ Like Kubespray, each cluster or VPS deployment is completely isolated in its own
    - `selfcloud-web` container preserves incoming `X-Forwarded-Proto` when proxying to `selfcloud-backend`.
    - `selfcloud.env.j2` automatically sets `COOKIE_SECURE=true` when `enable_ssl: true` and defaults `TRUST_PROXY=true` for reverse-proxied production deployments.
 6. **Authentication Methods & TLS Support (`auth_methods`)**:
-   - `AUTH_METHODS` defaults to `"basic,oauth"`, supporting both legacy Basic Auth and ownCloud desktop client v7+ OAuth2 PKCE.
-   - For plain HTTP / non-TLS environments (such as VirtualBox testing), configure `auth_methods: "basic"` in inventory `group_vars/all.yml` because ownCloud desktop client v7+ strictly requires HTTPS for OAuth2.
+   - `AUTH_METHODS` defaults to `"basic,oauth"`, supporting both legacy Basic Auth and ownCloud desktop client v6 / mobile OAuth2 PKCE.
+   - For plain HTTP / non-TLS environments (such as VirtualBox testing), configure `auth_methods: "basic"` in inventory `group_vars/all.yml` because OAuth2 clients strictly require HTTPS for OAuth2.

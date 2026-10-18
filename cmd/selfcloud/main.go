@@ -594,7 +594,7 @@ func cmdServe() {
 	mux.Handle("GET /metrics", metricsHandler)
 	mux.HandleFunc("GET /status.php", ocsHandler.StatusHandler)
 
-	// OpenID Connect Discovery & OAuth2 Endpoints for ownCloud Client (v7+, classic, and mobile)
+	// OpenID Connect Discovery & OAuth2 Endpoints for ownCloud Sync Clients (Desktop and Mobile)
 	mux.HandleFunc("GET /.well-known/webfinger", oauthHandler.WebFingerHandler)
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.OpenIDConfigurationHandler)
 	mux.HandleFunc("GET /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)

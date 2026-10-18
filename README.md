@@ -14,7 +14,9 @@ It enables official **ownCloud Desktop Sync Clients**, **Mobile Apps**, and **We
 
 ## ✨ Features
 
-- **100% ownCloud WebDAV & oCIS Protocol Support**: Fully compatible with official ownCloud Desktop Sync Clients (v6 classic Basic Auth and v7+ oCIS OAuth2 PKCE / Spaces), mobile apps, and WebDAV tools (`/status.php`, `/.well-known/openid-configuration`, `/ocs/v1.php/*`, `/graph/v1.0/*`, `/remote.php/webdav/*`).
+- **100% ownCloud WebDAV & Sync Client Support**: Fully compatible with official ownCloud Desktop Sync Clients (v2.x–v6.x with Basic Auth or OAuth2 PKCE), mobile apps (Android & iOS), and WebDAV tools (`/status.php`, `/.well-known/openid-configuration`, `/.well-known/webfinger`, `/ocs/v1.php/*`, `/remote.php/webdav/*`).
+  > [!NOTE]
+  > Desktop Client 7.x dropped support for ownCloud 10 servers and communicates exclusively with ownCloud Infinite Scale (oCIS). For desktop synchronization with SelfCloud, use the official **ownCloud Desktop Client 6.x series** (e.g. 6.0.0).
 - **Modern React 19 Web UI**: Fast, responsive Single Page Application built with Vite, TypeScript, and Tailwind CSS.
   - Interactive file explorer with breadcrumb navigation and `..` parent directory row.
   - Client-side column sorting by **Name**, **Date Modified**, and **Size** (ascending/descending).
@@ -181,7 +183,7 @@ SelfCloud features a unified subcommand CLI:
 ## 🔌 API & Endpoint Reference
 
 ### WebDAV & Desktop Sync Protocol (Sync Clients)
-- `GET /.well-known/openid-configuration`: OpenID Connect discovery for ownCloud sync clients (Desktop 6.x+ and Android/iOS) OAuth2 PKCE login.
+- `GET /.well-known/openid-configuration`: OpenID Connect discovery for ownCloud sync clients (Desktop 2.x–6.x and Android/iOS) OAuth2 PKCE login.
 - `GET /.well-known/webfinger`: WebFinger issuer discovery for mobile and desktop clients.
 - `GET /api/v1/auth/oauth2/authorize`, `POST /api/v1/auth/oauth2/token`: OAuth2 authorization code with PKCE flow and token issuance.
 - `GET /status.php`: ownCloud version check (`10.11.0.3`).

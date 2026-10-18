@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	// DefaultOwnCloudClientID and DefaultOwnCloudClientSecret match ownCloud Desktop Client v7+ defaults.
+	// DefaultOwnCloudClientID and DefaultOwnCloudClientSecret match ownCloud Desktop Client defaults.
 	DefaultOwnCloudClientID     = "xdXOt13JKxym1B1QcEncf2XDkLAexMBFwiT9j6EfhhHFJhs2KM9jbjTmf8JBXE69"
 	DefaultOwnCloudClientSecret = "UBntmLjC2yYCeHwsyj73Uwo9TAaecAetRwMw0xYcvNL9yRdLSUi0hUAHfvCHFeFh"
 
