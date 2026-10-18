@@ -49,7 +49,7 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 - `GET /api/v1/auth/oauth2/authorize`, `POST /api/v1/auth/oauth2/token`: OAuth2 PKCE login & token issuance for sync clients.
 - `GET /graph/v1.0/me/drives`: Microsoft Graph / oCIS personal drive Spaces discovery for sync client v7+.
 - `GET /status.php`: Returns ownCloud version JSON (`"installed": true`, `"version": "10.11.0.3"`).
-- `GET /ocs/v1.php/cloud/capabilities`, `/ocs/v2.php/cloud/capabilities`: Discovery API for desktop sync client (conditionally advertises `"spaces"` based on `AUTH_METHODS`).
+- `GET /ocs/v1.php/cloud/capabilities`, `/ocs/v2.php/cloud/capabilities`: Discovery API for sync clients (advertises core, files, and oauth2 capabilities; spaces opt-in via `ENABLE_SPACES`).
 - `/remote.php/webdav/*`, `/remote.php/dav/files/{username}/*`: WebDAV endpoints supporting `OPTIONS`, `PROPFIND`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `MOVE`, `COPY`, `PROPPATCH`.
 - `/api/v1/auth/*`: REST authentication (`POST /login`, `POST /logout`, `GET /me`).
 - `/api/v1/auth/sso/google/*`: Google OAuth2 authorization code flow & account linking.

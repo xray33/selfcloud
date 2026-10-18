@@ -594,7 +594,8 @@ func cmdServe() {
 	mux.Handle("GET /metrics", metricsHandler)
 	mux.HandleFunc("GET /status.php", ocsHandler.StatusHandler)
 
-	// OpenID Connect Discovery & OAuth2 Endpoints for ownCloud Client (v7+ and classic)
+	// OpenID Connect Discovery & OAuth2 Endpoints for ownCloud Client (v7+, classic, and mobile)
+	mux.HandleFunc("GET /.well-known/webfinger", oauthHandler.WebFingerHandler)
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.OpenIDConfigurationHandler)
 	mux.HandleFunc("GET /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
 	mux.HandleFunc("POST /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
@@ -659,8 +660,10 @@ func cmdServe() {
 
 	authWrapper := middleware.DualAuthMiddleware(repos.Users, repos.Sessions, cfg, loginRateLimiter)
 
-	// Microsoft Graph API for ownCloud Infinite Scale Spaces discovery
-	mux.Handle("GET /graph/v1.0/me/drives", authWrapper(http.HandlerFunc(graphHandler.MeDrivesHandler)))
+	// Microsoft Graph API for ownCloud Infinite Scale Spaces discovery (opt-in)
+	if cfg.EnableSpaces {
+		mux.Handle("GET /graph/v1.0/me/drives", authWrapper(http.HandlerFunc(graphHandler.MeDrivesHandler)))
+	}
 
 	mux.Handle("GET /ocs/v1.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))
 	mux.Handle("GET /ocs/v2.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))

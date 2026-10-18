@@ -114,6 +114,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	oauthHandler := api.NewOAuthHandler(oauthRepo, userRepo, sessionRepo, logger)
 	graphHandler := api.NewGraphHandler(userRepo, nodeRepo)
 
+	mux.HandleFunc("GET /.well-known/webfinger", oauthHandler.WebFingerHandler)
 	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.OpenIDConfigurationHandler)
 	mux.HandleFunc("GET /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
 	mux.HandleFunc("POST /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
@@ -754,7 +755,7 @@ func TestOwnCloudClientV7Workflow(t *testing.T) {
 		t.Errorf("expected user ID 'admin', got %q", userData.OCS.Data.ID)
 	}
 
-	// 6. Capabilities: Client checks capabilities for "spaces" support
+	// 6. Capabilities: Client checks capabilities
 	capReq, _ := http.NewRequest("GET", server.URL+"/ocs/v2.php/cloud/capabilities?format=json", nil)
 	capReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 	capResp, err := client.Do(capReq)
@@ -765,7 +766,10 @@ func TestOwnCloudClientV7Workflow(t *testing.T) {
 		OCS struct {
 			Data struct {
 				Capabilities struct {
-					Spaces struct {
+					OAuth2 struct {
+						Enabled bool `json:"enabled"`
+					} `json:"oauth2"`
+					Spaces *struct {
 						Enabled bool `json:"enabled"`
 					} `json:"spaces"`
 				} `json:"capabilities"`
@@ -776,8 +780,11 @@ func TestOwnCloudClientV7Workflow(t *testing.T) {
 		t.Fatalf("failed to decode capabilities: %v", err)
 	}
 	capResp.Body.Close()
-	if !capData.OCS.Data.Capabilities.Spaces.Enabled {
-		t.Fatalf("expected capabilities.spaces.enabled == true")
+	if !capData.OCS.Data.Capabilities.OAuth2.Enabled {
+		t.Fatalf("expected capabilities.oauth2.enabled == true")
+	}
+	if capData.OCS.Data.Capabilities.Spaces != nil && capData.OCS.Data.Capabilities.Spaces.Enabled {
+		t.Fatalf("expected capabilities.spaces to be omitted/disabled by default")
 	}
 
 	// 7. Graph API: Client queries /graph/v1.0/me/drives

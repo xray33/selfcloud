@@ -30,6 +30,7 @@ type Config struct {
 	RateLimitLoginWindow  time.Duration
 	MetricsAuthToken      string
 	AuthMethods           []string
+	EnableSpaces          bool
 }
 
 // DefaultMaxUploadSize is the default maximum upload limit across WebDAV and REST API (10 GB).
@@ -59,6 +60,7 @@ func LoadConfig() *Config {
 		RateLimitLoginWindow:  getEnvAsDuration("RATE_LIMIT_LOGIN_WINDOW", 1*time.Minute),
 		MetricsAuthToken:      getEnv("METRICS_AUTH_TOKEN", ""),
 		AuthMethods:           parseAuthMethods(getEnv("AUTH_METHODS", "basic,oauth")),
+		EnableSpaces:          getEnvAsBool("ENABLE_SPACES", false),
 	}
 }
 

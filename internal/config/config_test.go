@@ -32,6 +32,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.RateLimitLoginRequests != 15 {
 		t.Errorf("expected default RateLimitLoginRequests 15, got %d", cfg.RateLimitLoginRequests)
 	}
+	if cfg.EnableSpaces {
+		t.Errorf("expected default EnableSpaces false, got %v", cfg.EnableSpaces)
+	}
 }
 
 func TestLoadConfigEnvOverrides(t *testing.T) {

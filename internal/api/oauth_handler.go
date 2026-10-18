@@ -27,6 +27,14 @@ const (
 	DefaultOwnCloudClientID     = "xdXOt13JKxym1B1QcEncf2XDkLAexMBFwiT9j6EfhhHFJhs2KM9jbjTmf8JBXE69"
 	DefaultOwnCloudClientSecret = "UBntmLjC2yYCeHwsyj73Uwo9TAaecAetRwMw0xYcvNL9yRdLSUi0hUAHfvCHFeFh"
 
+	// Android client defaults
+	AndroidOwnCloudClientID     = "e4rAsNUSIUs0lF4nbv9FmCeUkTlV9GdgTLDH1b5uie7syb90SzEVrbN7HIpmWJeD"
+	AndroidOwnCloudClientSecret = "dInFYGV33xKzhbRmpqQltYNdfLdJIfJ9L5ISoKhNoT9qZftpdWSP71VrpGR9pmoD"
+
+	// iOS client defaults
+	IOSOwnCloudClientID     = "mxd5OQDk6es5LzOzRvidJNfXLUZS2oN3oUFeXPP8LpPrhx3UroJFduGEYIBOxkY1"
+	IOSOwnCloudClientSecret = "KFeFWWEZO9TkisIQzR3fo7hfiMXlOpaqP8CFuTbSHzV1TUuGECglPxpiVKJfOXIx"
+
 	DefaultAccessTokenTTL  = 24 * time.Hour
 	DefaultRefreshTokenTTL = 30 * 24 * time.Hour
 	DefaultAuthCodeTTL     = 5 * time.Minute
@@ -85,6 +93,37 @@ func (h *OAuthHandler) OpenIDConfigurationHandler(w http.ResponseWriter, r *http
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+// WebFingerHandler serves /.well-known/webfinger for OIDC issuer discovery (used by mobile apps).
+func (h *OAuthHandler) WebFingerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := r.Host
+	if host == "" {
+		host = "localhost:8080"
+	}
+	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+
+	doc := map[string]any{
+		"subject": baseURL,
+		"links": []map[string]string{
+			{
+				"rel":  "http://openid.net/specs/connect/1.0/issuer",
+				"href": baseURL,
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/jrd+json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(doc)
 }
 
@@ -445,22 +484,27 @@ func (h *OAuthHandler) extractClientCredentials(r *http.Request) (string, string
 }
 
 func (h *OAuthHandler) validateClient(clientID string) bool {
-	if clientID == "" {
-		return false
-	}
-	if clientID == DefaultOwnCloudClientID {
-		return true
-	}
-	return true
+	return clientID != ""
 }
 
 func (h *OAuthHandler) validateClientSecret(clientID, clientSecret string) bool {
-	if clientID == DefaultOwnCloudClientID {
+	switch clientID {
+	case DefaultOwnCloudClientID:
 		if clientSecret == "" || clientSecret == DefaultOwnCloudClientSecret {
 			return true
 		}
+	case AndroidOwnCloudClientID:
+		if clientSecret == "" || clientSecret == AndroidOwnCloudClientSecret {
+			return true
+		}
+	case IOSOwnCloudClientID:
+		if clientSecret == "" || clientSecret == IOSOwnCloudClientSecret {
+			return true
+		}
+	default:
+		return true
 	}
-	return true
+	return false
 }
 
 func validateRedirectURI(rawURL string) bool {
@@ -472,18 +516,37 @@ func validateRedirectURI(rawURL string) bool {
 		return false
 	}
 
-	// Native apps per RFC 8252 use loopback with dynamic port
+	// Mobile clients use custom schemes (e.g. oc://android.owncloud.com, oc://ios.owncloud.com)
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "oc" || scheme == "owncloud" {
+		return true
+	}
+
+	// Native desktop apps per RFC 8252 use loopback with dynamic port
 	hostname := u.Hostname()
 	if strings.EqualFold(hostname, "localhost") || hostname == "127.0.0.1" || hostname == "::1" {
-		return u.Scheme == "http" || u.Scheme == "https"
+		return scheme == "http" || scheme == "https"
 	}
 
 	ip := net.ParseIP(hostname)
 	if ip != nil && ip.IsLoopback() {
-		return u.Scheme == "http" || u.Scheme == "https"
+		return scheme == "http" || scheme == "https"
 	}
 
 	return false
+}
+
+func getClientDisplayName(clientID string) string {
+	switch clientID {
+	case AndroidOwnCloudClientID:
+		return "ownCloud Android App"
+	case IOSOwnCloudClientID:
+		return "ownCloud iOS App"
+	case DefaultOwnCloudClientID:
+		return "ownCloud Desktop Client"
+	default:
+		return "ownCloud App"
+	}
 }
 
 func verifyPKCE(verifier, challenge, method string) bool {
@@ -540,7 +603,7 @@ func (h *OAuthHandler) renderAuthorizePage(
 		}
 		bodyContent = fmt.Sprintf(`
 			<p class="app-info">
-				Application <span class="app-name">ownCloud Desktop Client</span> is requesting access to your account:
+				Application <span class="app-name">%s</span> is requesting access to your account:
 			</p>
 			<div class="user-badge-card">
 				<div class="user-avatar">%s</div>
@@ -558,7 +621,7 @@ func (h *OAuthHandler) renderAuthorizePage(
 					Cancel
 				</button>
 			</div>
-		`, html.EscapeString(initial), html.EscapeString(user.Username))
+		`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(initial), html.EscapeString(user.Username))
 	} else {
 		usernameAutofocus := "autofocus"
 		passwordAutofocus := ""
@@ -568,7 +631,7 @@ func (h *OAuthHandler) renderAuthorizePage(
 		}
 		bodyContent = fmt.Sprintf(`
 			<p class="app-info">
-				Sign in to your SelfCloud account to connect the desktop client:
+				Sign in to your SelfCloud account to connect <span class="app-name">%s</span>:
 			</p>
 			<div style="margin-bottom: 20px;">
 				<label class="form-label">Username</label>
@@ -597,7 +660,7 @@ func (h *OAuthHandler) renderAuthorizePage(
 					Cancel
 				</button>
 			</div>
-		`, html.EscapeString(loginHint), usernameAutofocus, passwordAutofocus)
+		`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(loginHint), usernameAutofocus, passwordAutofocus)
 	}
 
 	page := fmt.Sprintf(`<!DOCTYPE html>

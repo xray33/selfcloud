@@ -42,9 +42,34 @@ func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
 func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
-	spacesEnabled := true
+	oauthEnabled := true
+	spacesEnabled := false
 	if h.cfg != nil {
-		spacesEnabled = h.cfg.IsOAuthEnabled()
+		oauthEnabled = h.cfg.IsOAuthEnabled()
+		spacesEnabled = h.cfg.EnableSpaces
+	}
+
+	caps := map[string]any{
+		"core": map[string]any{
+			"pollinterval": 60,
+			"webdav-root":  "remote.php/webdav",
+		},
+		"files": map[string]any{
+			"bigfilechunking": false,
+			"undelete":        false,
+			"versioning":      false,
+		},
+		"oauth2": map[string]any{
+			"enabled": oauthEnabled,
+		},
+	}
+
+	if spacesEnabled {
+		caps["spaces"] = map[string]any{
+			"enabled":                      true,
+			"has_multiple_personal_spaces": false,
+			"version":                      "1.0.0",
+		}
 	}
 
 	resp := map[string]any{
@@ -62,22 +87,7 @@ func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request)
 					"string":  "10.11.0",
 					"edition": "Community",
 				},
-				"capabilities": map[string]any{
-					"core": map[string]any{
-						"pollinterval": 60,
-						"webdav-root":  "remote.php/webdav",
-					},
-					"files": map[string]any{
-						"bigfilechunking": false,
-						"undelete":        false,
-						"versioning":      false,
-					},
-					"spaces": map[string]any{
-						"enabled":                      spacesEnabled,
-						"has_multiple_personal_spaces": false,
-						"version":                      "1.0.0",
-					},
-				},
+				"capabilities": caps,
 			},
 		},
 	}

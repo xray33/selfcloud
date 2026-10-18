@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"selfcloud/internal/config"
 	"selfcloud/internal/domain"
 	"selfcloud/internal/middleware"
 	"selfcloud/internal/ocs"
@@ -37,37 +38,64 @@ func TestStatusHandler(t *testing.T) {
 }
 
 func TestCapabilitiesHandler(t *testing.T) {
-	handler := ocs.NewOCSHandler()
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/ocs/v1.php/cloud/capabilities", nil)
+	t.Run("Default configuration omits spaces and advertises oauth2", func(t *testing.T) {
+		handler := ocs.NewOCSHandler()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/ocs/v1.php/cloud/capabilities", nil)
 
-	handler.CapabilitiesHandler(rec, req)
+		handler.CapabilitiesHandler(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", rec.Code)
-	}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
 
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("failed to decode JSON: %v", err)
-	}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("failed to decode JSON: %v", err)
+		}
 
-	ocsMap, ok := body["ocs"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected 'ocs' key in response")
-	}
+		ocsMap, ok := body["ocs"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected 'ocs' key in response")
+		}
 
-	meta := ocsMap["meta"].(map[string]any)
-	if meta["status"] != "ok" || meta["statuscode"] != float64(100) {
-		t.Errorf("unexpected meta: %v", meta)
-	}
+		data := ocsMap["data"].(map[string]any)
+		caps := data["capabilities"].(map[string]any)
 
-	data := ocsMap["data"].(map[string]any)
-	caps := data["capabilities"].(map[string]any)
-	spaces, ok := caps["spaces"].(map[string]any)
-	if !ok || spaces["enabled"] != true {
-		t.Errorf("expected spaces capability enabled, got %v", caps["spaces"])
-	}
+		if _, hasSpaces := caps["spaces"]; hasSpaces {
+			t.Errorf("expected spaces capability to be omitted by default, got %v", caps["spaces"])
+		}
+
+		oauth, ok := caps["oauth2"].(map[string]any)
+		if !ok || oauth["enabled"] != true {
+			t.Errorf("expected oauth2 capability enabled, got %v", caps["oauth2"])
+		}
+	})
+
+	t.Run("With EnableSpaces enabled", func(t *testing.T) {
+		cfg := &config.Config{EnableSpaces: true}
+		handler := ocs.NewOCSHandler(cfg)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/ocs/v1.php/cloud/capabilities", nil)
+
+		handler.CapabilitiesHandler(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("failed to decode JSON: %v", err)
+		}
+
+		data := body["ocs"].(map[string]any)["data"].(map[string]any)
+		caps := data["capabilities"].(map[string]any)
+		spaces, ok := caps["spaces"].(map[string]any)
+		if !ok || spaces["enabled"] != true {
+			t.Errorf("expected spaces capability enabled, got %v", caps["spaces"])
+		}
+	})
 }
 
 func TestUserHandler(t *testing.T) {

@@ -181,11 +181,12 @@ SelfCloud features a unified subcommand CLI:
 ## 🔌 API & Endpoint Reference
 
 ### WebDAV & Desktop Sync Protocol (Sync Clients)
-- `GET /.well-known/openid-configuration`: OpenID Connect discovery for ownCloud desktop client v7+ OAuth2 PKCE login.
+- `GET /.well-known/openid-configuration`: OpenID Connect discovery for ownCloud sync clients (Desktop 6.x+ and Android/iOS) OAuth2 PKCE login.
+- `GET /.well-known/webfinger`: WebFinger issuer discovery for mobile and desktop clients.
 - `GET /api/v1/auth/oauth2/authorize`, `POST /api/v1/auth/oauth2/token`: OAuth2 authorization code with PKCE flow and token issuance.
-- `GET /graph/v1.0/me/drives`: Microsoft Graph / oCIS personal drive spaces discovery for client v7+.
 - `GET /status.php`: ownCloud version check (`10.11.0.3`).
-- `GET /ocs/v1.php/cloud/capabilities`, `GET /ocs/v2.php/cloud/capabilities`: ownCloud capabilities and spaces capability advertising.
+- `GET /ocs/v1.php/cloud/capabilities`, `GET /ocs/v2.php/cloud/capabilities`: ownCloud capabilities (core, files, and oauth2; spaces opt-in via `ENABLE_SPACES`).
+- `GET /graph/v1.0/me/drives`: Microsoft Graph personal drive spaces endpoint (available when `ENABLE_SPACES=true`).
 - `/remote.php/webdav/*`, `/remote.php/dav/files/{username}/*`: Standard WebDAV (`PROPFIND`, `PUT`, `GET`, `DELETE`, `MKCOL`, `MOVE`, `COPY`). Fully compliant with RFC 4918 (`Overwrite: T/F`, `Depth: 0/infinity`).
 
 ### REST API (Web UI)

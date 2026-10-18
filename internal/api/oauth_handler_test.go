@@ -361,3 +361,131 @@ func TestOAuth2CancelAuthorization(t *testing.T) {
 		t.Errorf("expected state=state456, got %s", loc.Query().Get("state"))
 	}
 }
+
+func TestWebFingerHandler(t *testing.T) {
+	oauthRepo := newMockOAuthRepo()
+	userRepo := &mockUserRepoForOAuth{}
+	sessionRepo := newMockSessionRepoForOAuth()
+	handler := api.NewOAuthHandler(oauthRepo, userRepo, sessionRepo, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/webfinger?rel=http%3A%2F%2Fopenid.net%2Fspecs%2Fconnect%2F1.0%2Fissuer&resource=https%3A%2F%2Fcloud.example.com", nil)
+	req.Host = "cloud.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.WebFingerHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from WebFinger, got %d", rec.Code)
+	}
+
+	var data struct {
+		Subject string `json:"subject"`
+		Links   []struct {
+			Rel  string `json:"rel"`
+			Href string `json:"href"`
+		} `json:"links"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("failed to decode WebFinger response: %v", err)
+	}
+	if data.Subject != "https://cloud.example.com" {
+		t.Errorf("expected subject https://cloud.example.com, got %s", data.Subject)
+	}
+	if len(data.Links) == 0 || data.Links[0].Href != "https://cloud.example.com" {
+		t.Errorf("expected issuer link https://cloud.example.com, got %+v", data.Links)
+	}
+}
+
+func TestOAuth2AndroidMobileFlow(t *testing.T) {
+	passwordHash, _ := domain.HashPassword("androidsecret")
+	user := &domain.User{
+		ID:           42,
+		Username:     "androiduser",
+		PasswordHash: passwordHash,
+	}
+
+	oauthRepo := newMockOAuthRepo()
+	userRepo := &mockUserRepoForOAuth{user: user}
+	sessionRepo := newMockSessionRepoForOAuth()
+	handler := api.NewOAuthHandler(oauthRepo, userRepo, sessionRepo, nil)
+
+	redirectURI := "oc://android.owncloud.com"
+	clientID := api.AndroidOwnCloudClientID
+	clientSecret := api.AndroidOwnCloudClientSecret
+
+	// 1. GET /index.php/apps/oauth2/authorize with Android redirect_uri
+	authURL := "/index.php/apps/oauth2/authorize?response_type=code&client_id=" + clientID +
+		"&redirect_uri=" + url.QueryEscape(redirectURI) +
+		"&state=andState77"
+	getReq := httptest.NewRequest(http.MethodGet, authURL, nil)
+	getRec := httptest.NewRecorder()
+	handler.AuthorizeHandler(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for Android authorize page, got %d (body: %s)", getRec.Code, getRec.Body.String())
+	}
+	if !strings.Contains(getRec.Body.String(), "ownCloud Android App") {
+		t.Errorf("expected page to display 'ownCloud Android App'")
+	}
+
+	// 2. POST /index.php/apps/oauth2/authorize with credentials
+	form := url.Values{
+		"action":       {"authorize"},
+		"client_id":    {clientID},
+		"redirect_uri": {redirectURI},
+		"state":        {"andState77"},
+		"username":     {"androiduser"},
+		"password":     {"androidsecret"},
+	}
+	postReq := httptest.NewRequest(http.MethodPost, "/index.php/apps/oauth2/authorize", strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRec := httptest.NewRecorder()
+	handler.AuthorizeHandler(postRec, postReq)
+
+	if postRec.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found redirect, got %d", postRec.Code)
+	}
+
+	loc := postRec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "oc://android.owncloud.com") {
+		t.Fatalf("expected redirect to oc://android.owncloud.com, got %s", loc)
+	}
+	parsedLoc, _ := url.Parse(loc)
+	authCode := parsedLoc.Query().Get("code")
+	if authCode == "" {
+		t.Fatalf("missing authorization code in redirect: %s", loc)
+	}
+	if parsedLoc.Query().Get("state") != "andState77" {
+		t.Errorf("expected state=andState77, got %s", parsedLoc.Query().Get("state"))
+	}
+
+	// 3. POST /index.php/apps/oauth2/api/v1/token to exchange code
+	tokenForm := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"code":          {authCode},
+		"redirect_uri":  {redirectURI},
+	}
+	tokenReq := httptest.NewRequest(http.MethodPost, "/index.php/apps/oauth2/api/v1/token", strings.NewReader(tokenForm.Encode()))
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenRec := httptest.NewRecorder()
+	handler.TokenHandler(tokenRec, tokenReq)
+
+	if tokenRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from token endpoint, got %d: %s", tokenRec.Code, tokenRec.Body.String())
+	}
+
+	var tokenData struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		UserID      string `json:"user_id"`
+	}
+	if err := json.Unmarshal(tokenRec.Body.Bytes(), &tokenData); err != nil {
+		t.Fatalf("failed to decode token response: %v", err)
+	}
+	if tokenData.AccessToken == "" || tokenData.TokenType != "Bearer" || tokenData.UserID != "androiduser" {
+		t.Fatalf("unexpected token response: %+v", tokenData)
+	}
+}
