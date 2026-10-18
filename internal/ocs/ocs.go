@@ -4,13 +4,25 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"selfcloud/internal/config"
 	"selfcloud/internal/middleware"
 )
 
-type OCSHandler struct{}
+type OCSHandler struct {
+	cfg *config.Config
+}
 
-func NewOCSHandler() *OCSHandler {
-	return &OCSHandler{}
+func NewOCSHandler(cfgs ...*config.Config) *OCSHandler {
+	h := &OCSHandler{}
+	if len(cfgs) > 0 {
+		h.cfg = cfgs[0]
+	}
+	return h
+}
+
+func (h *OCSHandler) WithConfig(cfg *config.Config) *OCSHandler {
+	h.cfg = cfg
+	return h
 }
 
 func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +41,11 @@ func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
 
 func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	spacesEnabled := true
+	if h.cfg != nil {
+		spacesEnabled = h.cfg.IsOAuthEnabled()
+	}
 
 	resp := map[string]any{
 		"ocs": map[string]any{
@@ -54,6 +71,11 @@ func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request)
 						"bigfilechunking": false,
 						"undelete":        false,
 						"versioning":      false,
+					},
+					"spaces": map[string]any{
+						"enabled":                      spacesEnabled,
+						"has_multiple_personal_spaces": false,
+						"version":                      "1.0.0",
 					},
 				},
 			},

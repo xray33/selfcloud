@@ -61,6 +61,13 @@ func TestCapabilitiesHandler(t *testing.T) {
 	if meta["status"] != "ok" || meta["statuscode"] != float64(100) {
 		t.Errorf("unexpected meta: %v", meta)
 	}
+
+	data := ocsMap["data"].(map[string]any)
+	caps := data["capabilities"].(map[string]any)
+	spaces, ok := caps["spaces"].(map[string]any)
+	if !ok || spaces["enabled"] != true {
+		t.Errorf("expected spaces capability enabled, got %v", caps["spaces"])
+	}
 }
 
 func TestUserHandler(t *testing.T) {

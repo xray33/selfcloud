@@ -14,7 +14,7 @@ It enables official **ownCloud Desktop Sync Clients**, **Mobile Apps**, and **We
 
 ## ✨ Features
 
-- **100% ownCloud WebDAV Protocol**: Fully compatible with official ownCloud Desktop Sync Clients (macOS, Windows, Linux) and mobile apps (`/status.php`, `/ocs/v1.php/*`, `/remote.php/webdav/*`).
+- **100% ownCloud WebDAV & oCIS Protocol Support**: Fully compatible with official ownCloud Desktop Sync Clients (v6 classic Basic Auth and v7+ oCIS OAuth2 PKCE / Spaces), mobile apps, and WebDAV tools (`/status.php`, `/.well-known/openid-configuration`, `/ocs/v1.php/*`, `/graph/v1.0/*`, `/remote.php/webdav/*`).
 - **Modern React 19 Web UI**: Fast, responsive Single Page Application built with Vite, TypeScript, and Tailwind CSS.
   - Interactive file explorer with breadcrumb navigation and `..` parent directory row.
   - Client-side column sorting by **Name**, **Date Modified**, and **Size** (ascending/descending).
@@ -170,6 +170,7 @@ SelfCloud features a unified subcommand CLI:
 | `SERVER_READ_TIMEOUT` | `30m` | HTTP server read timeout (Slowloris protection) |
 | `RATE_LIMIT_LOGIN_REQUESTS` | `15` | Maximum login/SSO/WebDAV failed requests per window per IP (`0` to disable) |
 | `RATE_LIMIT_LOGIN_WINDOW` | `1m` | Sliding window duration for login and auth rate limiting |
+| `AUTH_METHODS` | `basic,oauth` | Allowed auth schemes: `basic,oauth`, `basic`, or `oauth`. Use `basic` for plain HTTP setups without TLS |
 | `METRICS_AUTH_TOKEN` | `""` | Optional Bearer token required to access `/metrics` (`""` for unauthenticated) |
 | `SSO_GOOGLE_CLIENT_ID` | `""` | Google OAuth2 Client ID |
 | `SSO_GOOGLE_CLIENT_SECRET` | `""` | Google OAuth2 Client Secret |
@@ -179,9 +180,12 @@ SelfCloud features a unified subcommand CLI:
 
 ## 🔌 API & Endpoint Reference
 
-### WebDAV Protocol (Sync Clients)
-- `GET /status.php`: ownCloud version check
-- `GET /ocs/v1.php/cloud/capabilities`: ownCloud capabilities endpoint
+### WebDAV & Desktop Sync Protocol (Sync Clients)
+- `GET /.well-known/openid-configuration`: OpenID Connect discovery for ownCloud desktop client v7+ OAuth2 PKCE login.
+- `GET /api/v1/auth/oauth2/authorize`, `POST /api/v1/auth/oauth2/token`: OAuth2 authorization code with PKCE flow and token issuance.
+- `GET /graph/v1.0/me/drives`: Microsoft Graph / oCIS personal drive spaces discovery for client v7+.
+- `GET /status.php`: ownCloud version check (`10.11.0.3`).
+- `GET /ocs/v1.php/cloud/capabilities`, `GET /ocs/v2.php/cloud/capabilities`: ownCloud capabilities and spaces capability advertising.
 - `/remote.php/webdav/*`, `/remote.php/dav/files/{username}/*`: Standard WebDAV (`PROPFIND`, `PUT`, `GET`, `DELETE`, `MKCOL`, `MOVE`, `COPY`). Fully compliant with RFC 4918 (`Overwrite: T/F`, `Depth: 0/infinity`).
 
 ### REST API (Web UI)

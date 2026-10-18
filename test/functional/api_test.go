@@ -3,6 +3,8 @@ package functional
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -107,9 +110,27 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	mux.HandleFunc("GET /api/v1/public/shares/download", sharesHandler.PublicShareDownloadHandler)
 	mux.HandleFunc("GET /api/v1/public/shares", sharesHandler.PublicShareInfoHandler)
 
-	authWrapper := middleware.BasicAuthMiddleware(userRepo)
+	oauthRepo := repository.NewOAuthRepository(sqlDB)
+	oauthHandler := api.NewOAuthHandler(oauthRepo, userRepo, sessionRepo, logger)
+	graphHandler := api.NewGraphHandler(userRepo, nodeRepo)
+
+	mux.HandleFunc("GET /.well-known/openid-configuration", oauthHandler.OpenIDConfigurationHandler)
+	mux.HandleFunc("GET /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /api/v1/auth/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("GET /index.php/apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /index.php/apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("GET /apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /apps/oauth2/authorize", oauthHandler.AuthorizeHandler)
+	mux.HandleFunc("POST /api/v1/auth/oauth2/token", oauthHandler.TokenHandler)
+	mux.HandleFunc("POST /index.php/apps/oauth2/api/v1/token", oauthHandler.TokenHandler)
+	mux.HandleFunc("POST /apps/oauth2/api/v1/token", oauthHandler.TokenHandler)
+
+	authWrapper := middleware.DualAuthMiddleware(userRepo, sessionRepo, nil)
+	mux.Handle("GET /graph/v1.0/me/drives", authWrapper(http.HandlerFunc(graphHandler.MeDrivesHandler)))
 	mux.Handle("GET /ocs/v1.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))
+	mux.Handle("GET /ocs/v2.php/cloud/capabilities", authWrapper(http.HandlerFunc(ocsHandler.CapabilitiesHandler)))
 	mux.Handle("GET /ocs/v1.php/cloud/user", authWrapper(http.HandlerFunc(ocsHandler.UserHandler)))
+	mux.Handle("GET /ocs/v2.php/cloud/user", authWrapper(http.HandlerFunc(ocsHandler.UserHandler)))
 	mux.Handle("/remote.php/webdav/", authWrapper(webdavHandler))
 	mux.Handle("/remote.php/webdav", authWrapper(webdavHandler))
 
@@ -596,5 +617,227 @@ func TestFilesAndSharesAPIWorkflow(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+func TestOwnCloudClientV7Workflow(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	if server == nil {
+		return
+	}
+	defer cleanup()
+
+	client := server.Client()
+
+	// 1. Probe: Client performs unauthenticated PROPFIND /remote.php/webdav/
+	// Must return 401 and WWW-Authenticate containing "bearer "
+	probeReq, _ := http.NewRequest("PROPFIND", server.URL+"/remote.php/webdav/", nil)
+	probeResp, err := client.Do(probeReq)
+	if err != nil {
+		t.Fatalf("PROPFIND probe failed: %v", err)
+	}
+	if probeResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated PROPFIND, got %d", probeResp.StatusCode)
+	}
+	authHeader := probeResp.Header.Get("WWW-Authenticate")
+	probeResp.Body.Close()
+	if !strings.Contains(strings.ToLower(authHeader), "bearer ") {
+		t.Fatalf("expected WWW-Authenticate to contain 'bearer ', got %q", authHeader)
+	}
+
+	// 2. Discovery: Client fetches /.well-known/openid-configuration
+	discoveryResp, err := client.Get(server.URL + "/.well-known/openid-configuration")
+	if err != nil || discoveryResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /.well-known/openid-configuration failed: %v, status: %d", err, discoveryResp.StatusCode)
+	}
+	var oidcDoc struct {
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(discoveryResp.Body).Decode(&oidcDoc); err != nil {
+		t.Fatalf("failed to decode OIDC config: %v", err)
+	}
+	discoveryResp.Body.Close()
+	if oidcDoc.AuthorizationEndpoint == "" || oidcDoc.TokenEndpoint == "" {
+		t.Fatalf("missing authorization or token endpoint in OIDC doc: %+v", oidcDoc)
+	}
+
+	// 3. OAuth2 PKCE Flow: Client opens browser to authorize
+	codeVerifier := "an_arbitrary_random_verifier_string_of_sufficient_length_for_pkce_test"
+	h := sha256.Sum256([]byte(codeVerifier))
+	codeChallenge := base64.RawURLEncoding.EncodeToString(h[:])
+	redirectURI := "http://127.0.0.1:45678"
+
+	// Simulate user submitting credentials on the authorization page
+	authForm := url.Values{
+		"action":                {"authorize"},
+		"client_id":             {api.DefaultOwnCloudClientID},
+		"redirect_uri":          {redirectURI},
+		"state":                 {"random_state_val"},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
+		"username":              {"admin"},
+		"password":              {"admin"},
+	}
+
+	// Disable auto-redirect to inspect 302 Location header
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	authResp, err := noRedirectClient.PostForm(server.URL+"/index.php/apps/oauth2/authorize", authForm)
+	if err != nil {
+		t.Fatalf("POST /authorize failed: %v", err)
+	}
+	if authResp.StatusCode != http.StatusFound {
+		t.Fatalf("expected 302 Found redirect, got %d", authResp.StatusCode)
+	}
+	redirectLocation := authResp.Header.Get("Location")
+	authResp.Body.Close()
+
+	parsedRedirect, err := url.Parse(redirectLocation)
+	if err != nil {
+		t.Fatalf("failed to parse redirect URL: %v", err)
+	}
+	authCode := parsedRedirect.Query().Get("code")
+	if authCode == "" {
+		t.Fatalf("missing authorization code in redirect location: %s", redirectLocation)
+	}
+
+	// 4. Token Exchange: Client exchanges code for access_token and refresh_token
+	tokenForm := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {api.DefaultOwnCloudClientID},
+		"client_secret": {api.DefaultOwnCloudClientSecret},
+		"code":          {authCode},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {codeVerifier},
+	}
+	tokenResp, err := client.PostForm(server.URL+"/index.php/apps/oauth2/api/v1/token", tokenForm)
+	if err != nil || tokenResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /token failed: %v, status: %d", err, tokenResp.StatusCode)
+	}
+	var tokenData struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		RefreshToken string `json:"refresh_token"`
+		UserID       string `json:"user_id"`
+	}
+	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
+		t.Fatalf("failed to decode token response: %v", err)
+	}
+	tokenResp.Body.Close()
+	if tokenData.AccessToken == "" || tokenData.TokenType != "Bearer" || tokenData.UserID != "admin" {
+		t.Fatalf("invalid token response: %+v", tokenData)
+	}
+
+	// 5. User Info: Client calls /ocs/v2.php/cloud/user with Bearer token
+	userReq, _ := http.NewRequest("GET", server.URL+"/ocs/v2.php/cloud/user?format=json", nil)
+	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	userResp, err := client.Do(userReq)
+	if err != nil || userResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ocs/v2.php/cloud/user failed: %v, status: %d", err, userResp.StatusCode)
+	}
+	var userData struct {
+		OCS struct {
+			Data struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"display-name"`
+			} `json:"data"`
+		} `json:"ocs"`
+	}
+	if err := json.NewDecoder(userResp.Body).Decode(&userData); err != nil {
+		t.Fatalf("failed to decode user response: %v", err)
+	}
+	userResp.Body.Close()
+	if userData.OCS.Data.ID != "admin" {
+		t.Errorf("expected user ID 'admin', got %q", userData.OCS.Data.ID)
+	}
+
+	// 6. Capabilities: Client checks capabilities for "spaces" support
+	capReq, _ := http.NewRequest("GET", server.URL+"/ocs/v2.php/cloud/capabilities?format=json", nil)
+	capReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	capResp, err := client.Do(capReq)
+	if err != nil || capResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ocs/v2.php/cloud/capabilities failed: %v, status: %d", err, capResp.StatusCode)
+	}
+	var capData struct {
+		OCS struct {
+			Data struct {
+				Capabilities struct {
+					Spaces struct {
+						Enabled bool `json:"enabled"`
+					} `json:"spaces"`
+				} `json:"capabilities"`
+			} `json:"data"`
+		} `json:"ocs"`
+	}
+	if err := json.NewDecoder(capResp.Body).Decode(&capData); err != nil {
+		t.Fatalf("failed to decode capabilities: %v", err)
+	}
+	capResp.Body.Close()
+	if !capData.OCS.Data.Capabilities.Spaces.Enabled {
+		t.Fatalf("expected capabilities.spaces.enabled == true")
+	}
+
+	// 7. Graph API: Client queries /graph/v1.0/me/drives
+	graphReq, _ := http.NewRequest("GET", server.URL+"/graph/v1.0/me/drives", nil)
+	graphReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	graphResp, err := client.Do(graphReq)
+	if err != nil || graphResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /graph/v1.0/me/drives failed: %v, status: %d", err, graphResp.StatusCode)
+	}
+	var drivesData struct {
+		Value []struct {
+			ID        string `json:"id"`
+			DriveType string `json:"driveType"`
+			Root      struct {
+				WebDavURL string `json:"webDavUrl"`
+			} `json:"root"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(graphResp.Body).Decode(&drivesData); err != nil {
+		t.Fatalf("failed to decode drives response: %v", err)
+	}
+	graphResp.Body.Close()
+	if len(drivesData.Value) == 0 || drivesData.Value[0].DriveType != "personal" {
+		t.Fatalf("expected personal drive in drives response: %+v", drivesData)
+	}
+
+	// 8. WebDAV Operations with Bearer token
+	// 8a. PROPFIND /remote.php/webdav/
+	davPropReq, _ := http.NewRequest("PROPFIND", server.URL+"/remote.php/webdav/", nil)
+	davPropReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	davPropReq.Header.Set("Depth", "0")
+	davPropResp, err := client.Do(davPropReq)
+	if err != nil || davPropResp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND /remote.php/webdav/ failed: %v, status: %d", err, davPropResp.StatusCode)
+	}
+	davPropResp.Body.Close()
+
+	// 8b. PUT /remote.php/webdav/client7_test.txt
+	putContent := "Hello from ownCloud Client 7 sync engine!"
+	putReq, _ := http.NewRequest("PUT", server.URL+"/remote.php/webdav/client7_test.txt", strings.NewReader(putContent))
+	putReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	putResp, err := client.Do(putReq)
+	if err != nil || (putResp.StatusCode != http.StatusCreated && putResp.StatusCode != http.StatusNoContent) {
+		t.Fatalf("PUT /remote.php/webdav/client7_test.txt failed: %v, status: %d", err, putResp.StatusCode)
+	}
+	putResp.Body.Close()
+
+	// 8c. GET /remote.php/webdav/client7_test.txt
+	getReq, _ := http.NewRequest("GET", server.URL+"/remote.php/webdav/client7_test.txt", nil)
+	getReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	getResp, err := client.Do(getReq)
+	if err != nil || getResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /remote.php/webdav/client7_test.txt failed: %v, status: %d", err, getResp.StatusCode)
+	}
+	getBody, _ := io.ReadAll(getResp.Body)
+	getResp.Body.Close()
+	if string(getBody) != putContent {
+		t.Errorf("expected content %q, got %q", putContent, string(getBody))
+	}
+}
+
 
 

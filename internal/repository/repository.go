@@ -20,6 +20,7 @@ type Repositories struct {
 	Sessions   SessionRepository
 	Shares     ShareRepository
 	Identities IdentityRepository
+	OAuth      OAuthRepository
 }
 
 // NewRepositories creates a bundle of repositories bound to the given DBTX (*sql.DB or *sql.Tx).
@@ -30,6 +31,7 @@ func NewRepositories(d db.DBTX) *Repositories {
 		Sessions:   NewSessionRepository(d),
 		Shares:     NewShareRepository(d),
 		Identities: NewIdentityRepository(d),
+		OAuth:      NewOAuthRepository(d),
 	}
 }
 

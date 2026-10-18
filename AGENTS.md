@@ -13,7 +13,7 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 - **Frontend Subproject**: React 19 + TypeScript + Vite + Tailwind CSS in [`web/`](web/AGENTS.md).
 - **Metadata Database**: MariaDB / MySQL compatible (DB-agnostic design using `doug-martin/goqu/v9` SQL builder; versioned schema migrations via `schema_migrations` table).
 - **File Storage**: Local filesystem (`./data` or configured path).
-- **Authentication**: Dual Auth (HTTP Basic Auth for WebDAV desktop clients with brute-force rate limiting; HttpOnly session cookies & Bearer tokens for REST API; Google OAuth2 SSO) with per-IP sliding window rate limiting and CSRF origin validation.
+- **Authentication**: Configurable Dual Auth via `AUTH_METHODS` (`basic,oauth`, `basic`, or `oauth`): HTTP Basic Auth for legacy sync clients; OAuth2 authorization code with PKCE & Bearer tokens for ownCloud desktop sync client v7+ and REST API; HttpOnly session cookies; Google OAuth2 SSO; per-IP sliding window brute-force rate limiting and CSRF origin validation.
 - **Logging & Audit**: Standard `log/slog` structured logging with cryptographically random request correlation IDs (`request_id`, `int_request_id`), reverse proxy IP resolution guarded by `TRUST_PROXY`, and context-carried `[AUDIT]` event logging.
 - **Security & Storage**: Symlink escape detection via `filepath.EvalSymlinks`, application-level path length validation (max 700 chars for InnoDB index constraints), CSRF validation on mutating cookie requests, and RFC 4918 WebDAV compliance (`Overwrite`, `Depth`).
 - **Metrics**: Prometheus HTTP & WebDAV metrics exposed at `/metrics` (supports optional `METRICS_AUTH_TOKEN` protection).
@@ -45,8 +45,11 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 ```
 
 ## 4. Key Endpoints & API Compliance
+- `GET /.well-known/openid-configuration`: OpenID Connect discovery for desktop sync client v7+.
+- `GET /api/v1/auth/oauth2/authorize`, `POST /api/v1/auth/oauth2/token`: OAuth2 PKCE login & token issuance for sync clients.
+- `GET /graph/v1.0/me/drives`: Microsoft Graph / oCIS personal drive Spaces discovery for sync client v7+.
 - `GET /status.php`: Returns ownCloud version JSON (`"installed": true`, `"version": "10.11.0.3"`).
-- `GET /ocs/v1.php/cloud/capabilities`, `/ocs/v2.php/cloud/capabilities`: Discovery API for desktop sync client.
+- `GET /ocs/v1.php/cloud/capabilities`, `/ocs/v2.php/cloud/capabilities`: Discovery API for desktop sync client (conditionally advertises `"spaces"` based on `AUTH_METHODS`).
 - `/remote.php/webdav/*`, `/remote.php/dav/files/{username}/*`: WebDAV endpoints supporting `OPTIONS`, `PROPFIND`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `MOVE`, `COPY`, `PROPPATCH`.
 - `/api/v1/auth/*`: REST authentication (`POST /login`, `POST /logout`, `GET /me`).
 - `/api/v1/auth/sso/google/*`: Google OAuth2 authorization code flow & account linking.

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type Config struct {
 	RateLimitLoginRequests int
 	RateLimitLoginWindow  time.Duration
 	MetricsAuthToken      string
+	AuthMethods           []string
 }
 
 // DefaultMaxUploadSize is the default maximum upload limit across WebDAV and REST API (10 GB).
@@ -56,6 +58,7 @@ func LoadConfig() *Config {
 		RateLimitLoginRequests: getEnvAsInt("RATE_LIMIT_LOGIN_REQUESTS", 15),
 		RateLimitLoginWindow:  getEnvAsDuration("RATE_LIMIT_LOGIN_WINDOW", 1*time.Minute),
 		MetricsAuthToken:      getEnv("METRICS_AUTH_TOKEN", ""),
+		AuthMethods:           parseAuthMethods(getEnv("AUTH_METHODS", "basic,oauth")),
 	}
 }
 
@@ -107,4 +110,55 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	return defaultValue
 }
+
+func parseAuthMethods(val string) []string {
+	if val == "" {
+		return []string{"basic", "oauth"}
+	}
+	raw := strings.Split(val, ",")
+	methods := make([]string, 0, len(raw))
+	for _, m := range raw {
+		trimmed := strings.ToLower(strings.TrimSpace(m))
+		if trimmed != "" {
+			methods = append(methods, trimmed)
+		}
+	}
+	if len(methods) == 0 {
+		return []string{"basic", "oauth"}
+	}
+	return methods
+}
+
+func (c *Config) IsBasicAuthEnabled() bool {
+	for _, m := range c.AuthMethods {
+		if m == "basic" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) IsOAuthEnabled() bool {
+	for _, m := range c.AuthMethods {
+		if m == "oauth" || m == "oauth2" || m == "bearer" {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) WWWAuthenticateHeader() string {
+	var parts []string
+	if c.IsOAuthEnabled() {
+		parts = append(parts, `Bearer realm="selfcloud"`)
+	}
+	if c.IsBasicAuthEnabled() {
+		parts = append(parts, `Basic realm="selfcloud"`)
+	}
+	if len(parts) == 0 {
+		return `Basic realm="selfcloud"`
+	}
+	return strings.Join(parts, ", ")
+}
+
 

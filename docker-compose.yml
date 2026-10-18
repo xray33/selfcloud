@@ -34,6 +34,7 @@ services:
       SERVE_STATIC: "false"
       AUTO_MIGRATE: "${AUTO_MIGRATE:-true}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
+      AUTH_METHODS: "${AUTH_METHODS:-basic,oauth}"
       SSO_GOOGLE_CLIENT_ID: "${SSO_GOOGLE_CLIENT_ID:-}"
       SSO_GOOGLE_CLIENT_SECRET: "${SSO_GOOGLE_CLIENT_SECRET:-}"
       SSO_REDIRECT_BASE_URL: "${SSO_REDIRECT_BASE_URL:-http://localhost:8080}"
