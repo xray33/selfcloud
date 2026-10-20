@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -812,6 +813,18 @@ func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 	}
 
 	// 8. WebDAV Operations with Bearer token
+	type davMultiStatus struct {
+		XMLName   xml.Name `xml:"multistatus"`
+		Responses []struct {
+			HRef     string `xml:"href"`
+			PropStat struct {
+				Prop struct {
+					GetETag string `xml:"getetag"`
+				} `xml:"prop"`
+			} `xml:"propstat"`
+		} `xml:"response"`
+	}
+
 	// 8a. PROPFIND /remote.php/webdav/
 	davPropReq, _ := http.NewRequest("PROPFIND", server.URL+"/remote.php/webdav/", nil)
 	davPropReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
@@ -820,7 +833,12 @@ func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 	if err != nil || davPropResp.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("PROPFIND /remote.php/webdav/ failed: %v, status: %d", err, davPropResp.StatusCode)
 	}
+	var msBefore davMultiStatus
+	if err := xml.NewDecoder(davPropResp.Body).Decode(&msBefore); err != nil || len(msBefore.Responses) == 0 {
+		t.Fatalf("failed to decode MultiStatus XML: %v", err)
+	}
 	davPropResp.Body.Close()
+	rootETagBefore := msBefore.Responses[0].PropStat.Prop.GetETag
 
 	// 8b. PUT /remote.php/webdav/client_sync_test.txt
 	putContent := "Hello from ownCloud Desktop Client sync engine!"
@@ -832,7 +850,26 @@ func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 	}
 	putResp.Body.Close()
 
-	// 8c. GET /remote.php/webdav/client_sync_test.txt
+	// 8c. Verify root ETag changed after file creation so sync client detects update
+	davPropReq2, _ := http.NewRequest("PROPFIND", server.URL+"/remote.php/webdav/", nil)
+	davPropReq2.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	davPropReq2.Header.Set("Depth", "0")
+	davPropResp2, err := client.Do(davPropReq2)
+	if err != nil || davPropResp2.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND /remote.php/webdav/ after PUT failed: %v", err)
+	}
+	var msAfter davMultiStatus
+	if err := xml.NewDecoder(davPropResp2.Body).Decode(&msAfter); err != nil || len(msAfter.Responses) == 0 {
+		t.Fatalf("failed to decode MultiStatus XML after PUT: %v", err)
+	}
+	davPropResp2.Body.Close()
+	rootETagAfter := msAfter.Responses[0].PropStat.Prop.GetETag
+
+	if rootETagBefore == "" || rootETagAfter == "" || rootETagBefore == rootETagAfter {
+		t.Fatalf("expected root ETag to change after PUT file (to notify sync client), before=%q, after=%q", rootETagBefore, rootETagAfter)
+	}
+
+	// 8d. GET /remote.php/webdav/client_sync_test.txt
 	getReq, _ := http.NewRequest("GET", server.URL+"/remote.php/webdav/client_sync_test.txt", nil)
 	getReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
 	getResp, err := client.Do(getReq)

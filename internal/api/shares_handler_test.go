@@ -61,6 +61,9 @@ func (m *mockNodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, 
 func (m *mockNodeRepo) EnsureParentDirectoryExists(ctx context.Context, userID int64, parentPath string) error {
 	return nil
 }
+func (m *mockNodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	return nil
+}
 
 type mockShareRepo struct {
 	shares map[string]*domain.Share

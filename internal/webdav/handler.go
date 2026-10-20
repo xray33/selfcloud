@@ -316,14 +316,20 @@ func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *
 				MTime:       mtime,
 				ContentType: contentType,
 			}
-			return tx.Nodes.Create(r.Context(), node)
+			if err := tx.Nodes.Create(r.Context(), node); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
 		}
 
 		existingNode.Size = size
 		existingNode.ETag = etag
 		existingNode.MTime = mtime
 		existingNode.ContentType = contentType
-		return tx.Nodes.Update(r.Context(), existingNode)
+		if err := tx.Nodes.Update(r.Context(), existingNode); err != nil {
+			return err
+		}
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
 	})
 
 	if err != nil {
@@ -384,7 +390,10 @@ func (h *WebDAVHandler) handleDelete(w http.ResponseWriter, r *http.Request, use
 		childCount := len(children)
 
 		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			return tx.Nodes.DeletePrefix(r.Context(), user.ID, relPath)
+			if err := tx.Nodes.DeletePrefix(r.Context(), user.ID, relPath); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
 		}); err != nil {
 			h.logger.Error("DELETE dir database transaction failed", slog.String("path", relPath), slog.Any("error", err))
 			audit.RecordFailure(r.Context(), "dir_delete", relPath,
@@ -403,7 +412,10 @@ func (h *WebDAVHandler) handleDelete(w http.ResponseWriter, r *http.Request, use
 		)
 	} else {
 		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			return tx.Nodes.Delete(r.Context(), user.ID, relPath)
+			if err := tx.Nodes.Delete(r.Context(), user.ID, relPath); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
 		}); err != nil {
 			h.logger.Error("DELETE file database transaction failed", slog.String("path", relPath), slog.Any("error", err))
 			audit.RecordFailure(r.Context(), "file_delete", relPath,
@@ -466,7 +478,7 @@ func (h *WebDAVHandler) handleMkcol(w http.ResponseWriter, r *http.Request, user
 			}
 			return err
 		}
-		return nil
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
 	})
 
 	if err != nil {
@@ -535,7 +547,10 @@ func (h *WebDAVHandler) handleMove(w http.ResponseWriter, r *http.Request, user 
 	}
 
 	if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		return tx.Nodes.MovePrefix(r.Context(), user.ID, relPath, destRelPath)
+		if err := tx.Nodes.MovePrefix(r.Context(), user.ID, relPath, destRelPath); err != nil {
+			return err
+		}
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath, destRelPath)
 	}); err != nil {
 		if revertErr := h.storage.Move(user.Username, destRelPath, relPath); revertErr != nil {
 			h.logger.Error("CRITICAL: compensating storage move failed, filesystem and database are out of sync",
@@ -657,9 +672,15 @@ func (h *WebDAVHandler) handleCopy(w http.ResponseWriter, r *http.Request, user 
 		}
 		if existingDest != nil {
 			node.ID = existingDest.ID
-			return tx.Nodes.Update(r.Context(), node)
+			if err := tx.Nodes.Update(r.Context(), node); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
 		}
-		return tx.Nodes.Create(r.Context(), node)
+		if err := tx.Nodes.Create(r.Context(), node); err != nil {
+			return err
+		}
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
 	})
 	if err != nil {
 		if delErr := h.storage.Delete(user.Username, destRelPath); delErr != nil {
@@ -818,7 +839,7 @@ func (h *WebDAVHandler) handleCopyDir(w http.ResponseWriter, r *http.Request, us
 				return err
 			}
 		}
-		return nil
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
 	})
 
 	if err != nil {

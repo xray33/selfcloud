@@ -40,6 +40,9 @@ func (m *mockNodeRepoForGraph) MovePrefix(ctx context.Context, userID int64, old
 func (m *mockNodeRepoForGraph) EnsureParentDirectoryExists(ctx context.Context, userID int64, parentPath string) error {
 	return nil
 }
+func (m *mockNodeRepoForGraph) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	return nil
+}
 
 func TestMeDrivesHandler(t *testing.T) {
 	handler := api.NewGraphHandler(nil, &mockNodeRepoForGraph{})

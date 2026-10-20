@@ -14,6 +14,7 @@ import (
 
 	"selfcloud/internal/domain"
 	"selfcloud/internal/middleware"
+	"selfcloud/internal/pathutil"
 	"selfcloud/internal/repository"
 	"selfcloud/internal/storage"
 )
@@ -80,6 +81,18 @@ func (m *mockNodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, 
 }
 
 func (m *mockNodeRepo) EnsureParentDirectoryExists(ctx context.Context, userID int64, parentPath string) error {
+	return nil
+}
+
+func (m *mockNodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	for _, p := range paths {
+		for _, a := range pathutil.Ancestors(p) {
+			if node, ok := m.nodes[a]; ok && node.IsDir {
+				node.ETag = fmt.Sprintf("touched_%d", time.Now().UnixNano())
+				node.MTime = time.Now()
+			}
+		}
+	}
 	return nil
 }
 
