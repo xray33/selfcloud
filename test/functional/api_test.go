@@ -820,6 +820,7 @@ func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 			PropStat struct {
 				Prop struct {
 					GetETag string `xml:"getetag"`
+					OCSize  int64  `xml:"size"`
 				} `xml:"prop"`
 			} `xml:"propstat"`
 		} `xml:"response"`
@@ -867,6 +868,10 @@ func TestOwnCloudSyncClientOAuthWorkflow(t *testing.T) {
 
 	if rootETagBefore == "" || rootETagAfter == "" || rootETagBefore == rootETagAfter {
 		t.Fatalf("expected root ETag to change after PUT file (to notify sync client), before=%q, after=%q", rootETagBefore, rootETagAfter)
+	}
+
+	if rootSizeAfter := msAfter.Responses[0].PropStat.Prop.OCSize; rootSizeAfter < int64(len(putContent)) {
+		t.Fatalf("expected root directory oc:size to reflect uploaded file, got %d, expected at least %d", rootSizeAfter, len(putContent))
 	}
 
 	// 8d. GET /remote.php/webdav/client_sync_test.txt

@@ -324,9 +324,24 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 		_, _ = rand.Read(b)
 		newETag := hex.EncodeToString(b)
 
+		var dirSize int64
+		if a == "/" {
+			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0`
+			if err := r.db.QueryRowContext(ctx, sizeQuery, userID).Scan(&dirSize); err != nil {
+				return fmt.Errorf("failed to calculate size for root ancestor: %w", err)
+			}
+		} else {
+			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0 AND path LIKE ?`
+			likePattern := escapeSQLLike(a) + "/%"
+			if err := r.db.QueryRowContext(ctx, sizeQuery, userID, likePattern).Scan(&dirSize); err != nil {
+				return fmt.Errorf("failed to calculate size for ancestor %s: %w", a, err)
+			}
+		}
+
 		query, args, err := dialect.Update("nodes").
 			Set(goqu.Record{
 				"etag":       newETag,
+				"size":       dirSize,
 				"mtime":      now,
 				"updated_at": now,
 			}).
@@ -345,6 +360,24 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 		}
 	}
 
+	return nil
+}
+
+func (r *nodeRepo) RecalculateDirectorySizes(ctx context.Context, userID int64) error {
+	query := `UPDATE nodes d
+		JOIN (
+			SELECT d2.id, COALESCE(SUM(f.size), 0) AS total_size
+			FROM nodes d2
+			LEFT JOIN nodes f ON f.user_id = d2.user_id AND f.is_dir = 0 AND (
+				CASE WHEN d2.path = '/' THEN 1 ELSE f.path LIKE CONCAT(d2.path, '/%') END
+			)
+			WHERE d2.user_id = ? AND d2.is_dir = 1
+			GROUP BY d2.id
+		) s ON d.id = s.id
+		SET d.size = s.total_size;`
+	if _, err := r.db.ExecContext(ctx, query, userID); err != nil {
+		return fmt.Errorf("failed to recalculate directory sizes for user %d: %w", userID, err)
+	}
 	return nil
 }
 

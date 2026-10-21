@@ -83,13 +83,14 @@ func FormatMultiStatus(basePath string, nodes []*domain.Node) ([]byte, error) {
 			OCPermissions:   permissions,
 		}
 
+		size := node.Size
+		prop.OCSize = &size
+
 		if node.IsDir {
 			prop.ResourceType = &ResourceType{Collection: &struct{}{}}
 		} else {
 			prop.ResourceType = &ResourceType{}
-			size := node.Size
 			prop.GetContentLength = &size
-			prop.OCSize = &size
 			if node.ContentType != "" {
 				prop.GetContentType = node.ContentType
 			} else {

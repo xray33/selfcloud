@@ -215,7 +215,7 @@ export const FileList: React.FC<FileListProps> = ({
 
                   {/* Size */}
                   <td className="py-3 px-4 hidden md:table-cell text-slate-400 text-xs font-mono">
-                    {item.is_dir ? '-' : formatBytes(item.size)}
+                    {item.is_dir ? (item.size > 0 ? formatBytes(item.size) : '-') : formatBytes(item.size)}
                   </td>
 
                   {/* Actions */}

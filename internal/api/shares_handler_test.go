@@ -77,6 +77,9 @@ func (m *mockNodeRepo) EnsureParentDirectoryExists(ctx context.Context, userID i
 func (m *mockNodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
 	return nil
 }
+func (m *mockNodeRepo) RecalculateDirectorySizes(ctx context.Context, userID int64) error {
+	return nil
+}
 
 type mockShareRepo struct {
 	shares map[string]*domain.Share

@@ -43,6 +43,9 @@ func (m *mockNodeRepoForGraph) EnsureParentDirectoryExists(ctx context.Context, 
 func (m *mockNodeRepoForGraph) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
 	return nil
 }
+func (m *mockNodeRepoForGraph) RecalculateDirectorySizes(ctx context.Context, userID int64) error {
+	return nil
+}
 
 func TestMeDrivesHandler(t *testing.T) {
 	handler := api.NewGraphHandler(nil, &mockNodeRepoForGraph{})

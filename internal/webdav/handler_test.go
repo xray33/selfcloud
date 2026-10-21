@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,7 +144,33 @@ func (m *mockNodeRepo) TouchAncestors(ctx context.Context, userID int64, paths .
 			if node, ok := m.nodes[a]; ok && node.IsDir {
 				node.ETag = fmt.Sprintf("touched_%d", time.Now().UnixNano())
 				node.MTime = time.Now()
+				var totalSize int64
+				for _, child := range m.nodes {
+					if !child.IsDir {
+						if a == "/" || strings.HasPrefix(child.Path, a+"/") {
+							totalSize += child.Size
+						}
+					}
+				}
+				node.Size = totalSize
 			}
+		}
+	}
+	return nil
+}
+
+func (m *mockNodeRepo) RecalculateDirectorySizes(ctx context.Context, userID int64) error {
+	for _, dir := range m.nodes {
+		if dir.IsDir {
+			var totalSize int64
+			for _, child := range m.nodes {
+				if !child.IsDir {
+					if dir.Path == "/" || strings.HasPrefix(child.Path, dir.Path+"/") {
+						totalSize += child.Size
+					}
+				}
+			}
+			dir.Size = totalSize
 		}
 	}
 	return nil
@@ -350,6 +377,27 @@ func TestWebDAVHandlerGetAndRange(t *testing.T) {
 		body := rec.Body.String()
 		if !bytes.Contains([]byte(body), []byte("GMT</d:getlastmodified>")) {
 			t.Fatalf("expected d:getlastmodified to end with GMT according to HTTP-date specification, got: %s", body)
+		}
+	})
+
+	t.Run("PROPFIND on directory returns oc:size matching directory size", func(t *testing.T) {
+		repo.nodes["/sizedir"] = &domain.Node{
+			UserID: 1, Path: "/sizedir", Name: "sizedir", IsDir: true, Size: 12345,
+		}
+		req := withUserCtx(httptest.NewRequest("PROPFIND", "/remote.php/webdav/sizedir", nil))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMultiStatus {
+			t.Fatalf("expected status 207 Multi-Status, got %d", rec.Code)
+		}
+
+		body := rec.Body.String()
+		if !strings.Contains(body, "<oc:size>12345</oc:size>") {
+			t.Fatalf("expected oc:size to be 12345 for directory, got: %s", body)
+		}
+		if strings.Contains(body, "<d:getcontentlength>") {
+			t.Fatalf("expected d:getcontentlength to NOT be present on directory resource, got: %s", body)
 		}
 	})
 
