@@ -68,6 +68,7 @@ type NodeRepository interface {
 	MovePrefix(ctx context.Context, userID int64, oldPrefix, newPrefix string) error
 	EnsureParentDirectoryExists(ctx context.Context, userID int64, parentPath string) error
 	TouchAncestors(ctx context.Context, userID int64, paths ...string) error
+	RecalculateDirectorySizes(ctx context.Context, userID int64) error
 }
 
 type ShareRepository interface {

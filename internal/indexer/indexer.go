@@ -192,6 +192,7 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 
 	if !r.dryRun && (stats.Created > 0 || stats.Updated > 0 || stats.Deleted > 0) {
 		_ = r.nodeRepo.TouchAncestors(ctx, user.ID, "/")
+		_ = r.nodeRepo.RecalculateDirectorySizes(ctx, user.ID)
 	}
 
 	return stats, nil

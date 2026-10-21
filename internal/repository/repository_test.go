@@ -192,6 +192,27 @@ func TestRepositoryOperations(t *testing.T) {
 	if newFolderB.ETag == oldFolderB.ETag {
 		t.Errorf("expected /folderB ETag to change after TouchAncestors, remained %s", newFolderB.ETag)
 	}
+	if newFolderB.Size != 999 {
+		t.Errorf("expected /folderB Size to be 999 after TouchAncestors, got %d", newFolderB.Size)
+	}
+	if newRoot.Size < 999 {
+		t.Errorf("expected root Size to be at least 999 after TouchAncestors, got %d", newRoot.Size)
+	}
+
+	// Test RecalculateDirectorySizes
+	canceledCtx2, cancel2 := context.WithCancel(ctx)
+	cancel2()
+	if err := repos.Nodes.RecalculateDirectorySizes(canceledCtx2, fetchedUser.ID); err == nil {
+		t.Errorf("expected error with canceled context in RecalculateDirectorySizes, got nil")
+	}
+
+	if err := repos.Nodes.RecalculateDirectorySizes(ctx, fetchedUser.ID); err != nil {
+		t.Errorf("RecalculateDirectorySizes failed: %v", err)
+	}
+	recalcFolderB, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/folderB")
+	if recalcFolderB.Size != 999 {
+		t.Errorf("expected /folderB Size to be 999 after RecalculateDirectorySizes, got %d", recalcFolderB.Size)
+	}
 
 	// 3. Share Repository with ExpiresAt & ListByUserID
 	expiresAt := time.Now().Add(24 * time.Hour)

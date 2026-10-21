@@ -232,6 +232,25 @@ func Migrate(db *sql.DB) error {
 				return nil
 			},
 		},
+		{
+			version:     5,
+			description: "Calculate initial sizes for all directory nodes",
+			run: func(db *sql.DB) error {
+				query := `UPDATE nodes d
+					JOIN (
+						SELECT d2.id, COALESCE(SUM(f.size), 0) AS total_size
+						FROM nodes d2
+						LEFT JOIN nodes f ON f.user_id = d2.user_id AND f.is_dir = 0 AND (
+							CASE WHEN d2.path = '/' THEN 1 ELSE f.path LIKE CONCAT(d2.path, '/%') END
+						)
+						WHERE d2.is_dir = 1
+						GROUP BY d2.id
+					) s ON d.id = s.id
+					SET d.size = s.total_size;`
+				_, err := db.Exec(query)
+				return err
+			},
+		},
 	}
 
 	for _, m := range migrations {
