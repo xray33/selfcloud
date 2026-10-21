@@ -190,6 +190,10 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 		stats.Deleted += orphanStats
 	}
 
+	if !r.dryRun && (stats.Created > 0 || stats.Updated > 0 || stats.Deleted > 0) {
+		_ = r.nodeRepo.TouchAncestors(ctx, user.ID, "/")
+	}
+
 	return stats, nil
 }
 

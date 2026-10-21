@@ -86,3 +86,27 @@ func GenerateFileID(userID int64) string {
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%08doc_%s", userID, hex.EncodeToString(b))
 }
+
+// Ancestors returns all ancestor directory paths for a given path up to and including root "/".
+// For example, for "/Temp/macroses.txt", it returns []string{"/Temp", "/"}.
+// For "/file.txt", it returns []string{"/"}.
+// For "/Temp" or "/", it returns []string{"/"}.
+func Ancestors(p string) []string {
+	p = NormalizePath(p)
+	if p == "" || p == "/" {
+		return []string{"/"}
+	}
+
+	var ancestors []string
+	curr := p
+	for {
+		parent, _ := SplitPath(curr)
+		ancestors = append(ancestors, parent)
+		if parent == "/" {
+			break
+		}
+		curr = parent
+	}
+	return ancestors
+}
+

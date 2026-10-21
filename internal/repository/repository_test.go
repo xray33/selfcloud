@@ -170,6 +170,29 @@ func TestRepositoryOperations(t *testing.T) {
 		t.Errorf("Delete node failed: %v", err)
 	}
 
+	// Test TouchAncestors
+	if err := repos.Nodes.TouchAncestors(ctx, fetchedUser.ID); err != nil {
+		t.Errorf("TouchAncestors with empty paths failed: %v", err)
+	}
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := repos.Nodes.TouchAncestors(canceledCtx, fetchedUser.ID, "/folderB/child.txt"); err == nil {
+		t.Errorf("expected error with canceled context in TouchAncestors, got nil")
+	}
+	oldRoot, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/")
+	oldFolderB, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/folderB")
+	if err := repos.Nodes.TouchAncestors(ctx, fetchedUser.ID, "/folderB/child.txt"); err != nil {
+		t.Errorf("TouchAncestors failed: %v", err)
+	}
+	newRoot, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/")
+	newFolderB, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/folderB")
+	if newRoot.ETag == oldRoot.ETag {
+		t.Errorf("expected root ETag to change after TouchAncestors, remained %s", newRoot.ETag)
+	}
+	if newFolderB.ETag == oldFolderB.ETag {
+		t.Errorf("expected /folderB ETag to change after TouchAncestors, remained %s", newFolderB.ETag)
+	}
+
 	// 3. Share Repository with ExpiresAt & ListByUserID
 	expiresAt := time.Now().Add(24 * time.Hour)
 	share := &domain.Share{

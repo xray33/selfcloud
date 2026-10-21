@@ -100,6 +100,34 @@ func TestFormatContentDisposition(t *testing.T) {
 	}
 }
 
+func TestAncestors(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"", []string{"/"}},
+		{"/", []string{"/"}},
+		{"/file.txt", []string{"/"}},
+		{"/Temp", []string{"/"}},
+		{"/Temp/macroses.txt", []string{"/Temp", "/"}},
+		{"/a/b/c/d.txt", []string{"/a/b/c", "/a/b", "/a", "/"}},
+		{"/a/b/c/", []string{"/a/b", "/a", "/"}},
+	}
+
+	for _, tt := range tests {
+		got := Ancestors(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("Ancestors(%q) len = %d, want %d (%v vs %v)", tt.input, len(got), len(tt.want), got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("Ancestors(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
 func TestValidatePathLength(t *testing.T) {
 	shortPath := "/valid/short/path.txt"
 	if err := ValidatePathLength(shortPath); err != nil {

@@ -236,7 +236,7 @@ func (h *FilesHandler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			node = existingNode
 		}
-		return nil
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destPath)
 	})
 
 	if err != nil {
@@ -319,7 +319,7 @@ func (h *FilesHandler) MkdirHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return err
 		}
-		return nil
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, dirPath)
 	})
 
 	if err != nil {
@@ -379,7 +379,10 @@ func (h *FilesHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	if node.IsDir {
 		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			return tx.Nodes.DeletePrefix(r.Context(), user.ID, targetPath)
+			if err := tx.Nodes.DeletePrefix(r.Context(), user.ID, targetPath); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, targetPath)
 		}); err != nil {
 			h.logger.Error("API delete dir DB transaction failed", slog.String("path", targetPath), slog.Any("error", err))
 			writeJSONError(w, http.StatusInternalServerError, "Failed to delete directory metadata")
@@ -389,7 +392,10 @@ func (h *FilesHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		audit.Record(r.Context(), "api_delete_dir", targetPath, fmt.Sprintf("User %q deleted directory %q", user.Username, targetPath))
 	} else {
 		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			return tx.Nodes.Delete(r.Context(), user.ID, targetPath)
+			if err := tx.Nodes.Delete(r.Context(), user.ID, targetPath); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(r.Context(), user.ID, targetPath)
 		}); err != nil {
 			h.logger.Error("API delete file DB transaction failed", slog.String("path", targetPath), slog.Any("error", err))
 			writeJSONError(w, http.StatusInternalServerError, "Failed to delete file metadata")
@@ -435,7 +441,10 @@ func (h *FilesHandler) RenameHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		return tx.Nodes.MovePrefix(r.Context(), user.ID, oldPath, newPath)
+		if err := tx.Nodes.MovePrefix(r.Context(), user.ID, oldPath, newPath); err != nil {
+			return err
+		}
+		return tx.Nodes.TouchAncestors(r.Context(), user.ID, oldPath, newPath)
 	}); err != nil {
 		if revertErr := h.storage.Move(user.Username, newPath, oldPath); revertErr != nil {
 			h.logger.Error("CRITICAL: compensating storage move failed, filesystem and database are out of sync",

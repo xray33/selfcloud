@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -296,6 +298,53 @@ func (r *nodeRepo) ensureParentDirectoryExistsWithDepth(ctx context.Context, use
 		}
 		return err
 	}
+	return nil
+}
+
+func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	seen := make(map[string]struct{})
+	var ancestors []string
+
+	for _, p := range paths {
+		for _, a := range pathutil.Ancestors(p) {
+			if _, exists := seen[a]; !exists {
+				seen[a] = struct{}{}
+				ancestors = append(ancestors, a)
+			}
+		}
+	}
+
+	if len(ancestors) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	for _, a := range ancestors {
+		b := make([]byte, 16)
+		_, _ = rand.Read(b)
+		newETag := hex.EncodeToString(b)
+
+		query, args, err := dialect.Update("nodes").
+			Set(goqu.Record{
+				"etag":       newETag,
+				"mtime":      now,
+				"updated_at": now,
+			}).
+			Where(goqu.Ex{
+				"user_id": userID,
+				"path":    a,
+				"is_dir":  1,
+			}).
+			ToSQL()
+		if err != nil {
+			return fmt.Errorf("failed to build SQL for TouchAncestors: %w", err)
+		}
+
+		if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+			return fmt.Errorf("failed to update ancestor %s: %w", a, err)
+		}
+	}
+
 	return nil
 }
 
