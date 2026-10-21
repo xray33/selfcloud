@@ -171,6 +171,14 @@ func TestRepositoryOperations(t *testing.T) {
 	}
 
 	// Test TouchAncestors
+	if err := repos.Nodes.TouchAncestors(ctx, fetchedUser.ID); err != nil {
+		t.Errorf("TouchAncestors with empty paths failed: %v", err)
+	}
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := repos.Nodes.TouchAncestors(canceledCtx, fetchedUser.ID, "/folderB/child.txt"); err == nil {
+		t.Errorf("expected error with canceled context in TouchAncestors, got nil")
+	}
 	oldRoot, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/")
 	oldFolderB, _ := repos.Nodes.GetByPath(ctx, fetchedUser.ID, "/folderB")
 	if err := repos.Nodes.TouchAncestors(ctx, fetchedUser.ID, "/folderB/child.txt"); err != nil {

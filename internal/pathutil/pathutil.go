@@ -101,17 +101,11 @@ func Ancestors(p string) []string {
 	curr := p
 	for {
 		parent, _ := SplitPath(curr)
-		if parent == "" {
-			break
-		}
 		ancestors = append(ancestors, parent)
 		if parent == "/" {
 			break
 		}
 		curr = parent
-	}
-	if len(ancestors) == 0 {
-		return []string{"/"}
 	}
 	return ancestors
 }

@@ -20,7 +20,7 @@ import (
 )
 
 type mockTransactor struct {
-	repo *mockNodeRepo
+	repo repository.NodeRepository
 }
 
 func (m *mockTransactor) WithTx(ctx context.Context, fn func(txRepo *repository.Repositories) error) error {
@@ -28,6 +28,50 @@ func (m *mockTransactor) WithTx(ctx context.Context, fn func(txRepo *repository.
 		Nodes: m.repo,
 	}
 	return fn(repos)
+}
+
+type errorNodeRepo struct {
+	*mockNodeRepo
+	createErr       error
+	updateErr       error
+	deleteErr       error
+	deletePrefixErr error
+	movePrefixErr   error
+}
+
+func (e *errorNodeRepo) Create(ctx context.Context, node *domain.Node) error {
+	if e.createErr != nil {
+		return e.createErr
+	}
+	return e.mockNodeRepo.Create(ctx, node)
+}
+
+func (e *errorNodeRepo) Update(ctx context.Context, node *domain.Node) error {
+	if e.updateErr != nil {
+		return e.updateErr
+	}
+	return e.mockNodeRepo.Update(ctx, node)
+}
+
+func (e *errorNodeRepo) Delete(ctx context.Context, userID int64, path string) error {
+	if e.deleteErr != nil {
+		return e.deleteErr
+	}
+	return e.mockNodeRepo.Delete(ctx, userID, path)
+}
+
+func (e *errorNodeRepo) DeletePrefix(ctx context.Context, userID int64, pathPrefix string) error {
+	if e.deletePrefixErr != nil {
+		return e.deletePrefixErr
+	}
+	return e.mockNodeRepo.DeletePrefix(ctx, userID, pathPrefix)
+}
+
+func (e *errorNodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, newPrefix string) error {
+	if e.movePrefixErr != nil {
+		return e.movePrefixErr
+	}
+	return e.mockNodeRepo.MovePrefix(ctx, userID, oldPrefix, newPrefix)
 }
 
 type mockNodeRepo struct {
@@ -77,6 +121,15 @@ func (m *mockNodeRepo) DeletePrefix(ctx context.Context, userID int64, pathPrefi
 }
 
 func (m *mockNodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, newPrefix string) error {
+	for k, v := range m.nodes {
+		if k == oldPrefix || (len(k) > len(oldPrefix) && k[:len(oldPrefix)] == oldPrefix) {
+			newPath := newPrefix + k[len(oldPrefix):]
+			delete(m.nodes, k)
+			v.Path = newPath
+			v.Name = filepath.Base(newPath)
+			m.nodes[newPath] = v
+		}
+	}
 	return nil
 }
 
@@ -298,5 +351,185 @@ func TestWebDAVHandlerGetAndRange(t *testing.T) {
 		if !bytes.Contains([]byte(body), []byte("GMT</d:getlastmodified>")) {
 			t.Fatalf("expected d:getlastmodified to end with GMT according to HTTP-date specification, got: %s", body)
 		}
+	})
+
+	t.Run("MKCOL creates directory successfully", func(t *testing.T) {
+		req := withUserCtx(httptest.NewRequest("MKCOL", "/remote.php/webdav/testdir", nil))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if repo.nodes["/testdir"] == nil || !repo.nodes["/testdir"].IsDir {
+			t.Fatalf("expected /testdir to exist as directory in repo")
+		}
+	})
+
+	t.Run("MOVE file to new destination succeeds", func(t *testing.T) {
+		req := withUserCtx(httptest.NewRequest("MOVE", "/remote.php/webdav/hello.txt", nil))
+		req.Header.Set("Destination", "http://localhost:8080/remote.php/webdav/hello_moved.txt")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d", rec.Code)
+		}
+		if repo.nodes["/hello_moved.txt"] == nil {
+			t.Fatalf("expected /hello_moved.txt to exist in repo")
+		}
+	})
+
+	t.Run("COPY directory to new destination succeeds", func(t *testing.T) {
+		// Setup source dir and file in repo and storage
+		_ = st.Mkdir(user.Username, "/srcdir")
+		_, _ = st.Write(user.Username, "/srcdir/file.txt", bytes.NewReader([]byte("dir file")))
+		repo.nodes["/srcdir"] = &domain.Node{
+			UserID: 1, Path: "/srcdir", Name: "srcdir", IsDir: true,
+		}
+		repo.nodes["/srcdir/file.txt"] = &domain.Node{
+			UserID: 1, Path: "/srcdir/file.txt", ParentPath: "/srcdir", Name: "file.txt", IsDir: false,
+		}
+
+		req := withUserCtx(httptest.NewRequest("COPY", "/remote.php/webdav/srcdir", nil))
+		req.Header.Set("Destination", "http://localhost:8080/remote.php/webdav/destdir")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d", rec.Code)
+		}
+		if repo.nodes["/destdir"] == nil || !repo.nodes["/destdir"].IsDir {
+			t.Fatalf("expected /destdir directory to exist in repo")
+		}
+		if repo.nodes["/destdir/file.txt"] == nil {
+			t.Fatalf("expected /destdir/file.txt to exist in repo")
+		}
+	})
+
+	t.Run("DELETE file succeeds and updates ancestors", func(t *testing.T) {
+		// Setup file
+		_, _ = st.Write(user.Username, "/file_to_del.txt", bytes.NewReader([]byte("delete me")))
+		repo.nodes["/file_to_del.txt"] = &domain.Node{
+			UserID: 1, Path: "/file_to_del.txt", Name: "file_to_del.txt", IsDir: false,
+		}
+
+		req := withUserCtx(httptest.NewRequest("DELETE", "/remote.php/webdav/file_to_del.txt", nil))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected status 204 No Content, got %d", rec.Code)
+		}
+		if repo.nodes["/file_to_del.txt"] != nil {
+			t.Fatalf("expected /file_to_del.txt to be removed from repo")
+		}
+	})
+
+	t.Run("DELETE directory succeeds and updates ancestors", func(t *testing.T) {
+		_ = st.Mkdir(user.Username, "/dir_to_del")
+		repo.nodes["/dir_to_del"] = &domain.Node{
+			UserID: 1, Path: "/dir_to_del", Name: "dir_to_del", IsDir: true,
+		}
+
+		req := withUserCtx(httptest.NewRequest("DELETE", "/remote.php/webdav/dir_to_del", nil))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected status 204 No Content, got %d", rec.Code)
+		}
+		if repo.nodes["/dir_to_del"] != nil {
+			t.Fatalf("expected /dir_to_del to be removed from repo")
+		}
+	})
+
+	t.Run("WebDAV operation DB transaction errors return 500", func(t *testing.T) {
+		errRepo := &errorNodeRepo{
+			mockNodeRepo: repo,
+		}
+		errTx := &mockTransactor{repo: errRepo}
+		errHandler := NewWebDAVHandler(errTx, errRepo, st, logger)
+
+		// 1. PUT create error
+		errRepo.createErr = fmt.Errorf("db create error")
+		req := withUserCtx(httptest.NewRequest(http.MethodPut, "/remote.php/webdav/create_err.txt", bytes.NewReader([]byte("data"))))
+		rec := httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for PUT create error, got %d", rec.Code)
+		}
+		errRepo.createErr = nil
+
+		// 2. PUT update error
+		repo.nodes["/update_err.txt"] = &domain.Node{UserID: 1, Path: "/update_err.txt", Name: "update_err.txt"}
+		errRepo.updateErr = fmt.Errorf("db update error")
+		req = withUserCtx(httptest.NewRequest(http.MethodPut, "/remote.php/webdav/update_err.txt", bytes.NewReader([]byte("data"))))
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for PUT update error, got %d", rec.Code)
+		}
+		errRepo.updateErr = nil
+
+		// 3. DELETE dir error
+		repo.nodes["/deldir_err"] = &domain.Node{UserID: 1, Path: "/deldir_err", Name: "deldir_err", IsDir: true}
+		errRepo.deletePrefixErr = fmt.Errorf("db delete dir error")
+		req = withUserCtx(httptest.NewRequest("DELETE", "/remote.php/webdav/deldir_err", nil))
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for DELETE dir error, got %d", rec.Code)
+		}
+		errRepo.deletePrefixErr = nil
+
+		// 4. DELETE file error
+		repo.nodes["/delfile_err.txt"] = &domain.Node{UserID: 1, Path: "/delfile_err.txt", Name: "delfile_err.txt", IsDir: false}
+		errRepo.deleteErr = fmt.Errorf("db delete file error")
+		req = withUserCtx(httptest.NewRequest("DELETE", "/remote.php/webdav/delfile_err.txt", nil))
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for DELETE file error, got %d", rec.Code)
+		}
+		errRepo.deleteErr = nil
+
+		// 5. MOVE error
+		repo.nodes["/move_err.txt"] = &domain.Node{UserID: 1, Path: "/move_err.txt", Name: "move_err.txt"}
+		_, _ = st.Write(user.Username, "/move_err.txt", bytes.NewReader([]byte("data")))
+		errRepo.movePrefixErr = fmt.Errorf("db move error")
+		req = withUserCtx(httptest.NewRequest("MOVE", "/remote.php/webdav/move_err.txt", nil))
+		req.Header.Set("Destination", "http://localhost:8080/remote.php/webdav/move_err_dest.txt")
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for MOVE error, got %d", rec.Code)
+		}
+		errRepo.movePrefixErr = nil
+
+		// 6. COPY create error
+		errRepo.createErr = fmt.Errorf("db copy create error")
+		req = withUserCtx(httptest.NewRequest("COPY", "/remote.php/webdav/hello_moved.txt", nil))
+		req.Header.Set("Destination", "http://localhost:8080/remote.php/webdav/copy_err_dest.txt")
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for COPY create error, got %d", rec.Code)
+		}
+		errRepo.createErr = nil
+
+		// 7. COPY update error (with overwrite)
+		repo.nodes["/copy_dest_existing.txt"] = &domain.Node{UserID: 1, Path: "/copy_dest_existing.txt", Name: "copy_dest_existing.txt"}
+		_, _ = st.Write(user.Username, "/copy_dest_existing.txt", bytes.NewReader([]byte("old")))
+		errRepo.updateErr = fmt.Errorf("db copy update error")
+		req = withUserCtx(httptest.NewRequest("COPY", "/remote.php/webdav/hello_moved.txt", nil))
+		req.Header.Set("Destination", "http://localhost:8080/remote.php/webdav/copy_dest_existing.txt")
+		req.Header.Set("Overwrite", "T")
+		rec = httptest.NewRecorder()
+		errHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500 for COPY update error, got %d", rec.Code)
+		}
+		errRepo.updateErr = nil
 	})
 }

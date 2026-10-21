@@ -92,6 +92,18 @@ func TestFilesHandlerOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("Delete removes directory atomically", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/files?path=/documents", nil)
+		req = req.WithContext(middleware.WithUser(req.Context(), user))
+		w := httptest.NewRecorder()
+
+		handler.DeleteHandler(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
 	t.Run("Mkdir cleans up storage directory when DB transaction fails", func(t *testing.T) {
 		failingTx := &failingMockTransactor{err: os.ErrInvalid}
 		failHandler := NewFilesHandler(failingTx, nodeRepo, st, logger)
@@ -191,6 +203,53 @@ func TestFilesHandlerOperations(t *testing.T) {
 		limitedHandler.UploadHandler(w, req)
 		if w.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("expected 413 Request Entity Too Large, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("Delete returns 500 when DeletePrefix fails in DB", func(t *testing.T) {
+		nodeRepo.nodes["/del_dir_err"] = &domain.Node{UserID: 1, Path: "/del_dir_err", Name: "del_dir_err", IsDir: true}
+		nodeRepo.deletePrefixErr = os.ErrInvalid
+		defer func() { nodeRepo.deletePrefixErr = nil }()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/files?path=/del_dir_err", nil)
+		req = req.WithContext(middleware.WithUser(req.Context(), user))
+		w := httptest.NewRecorder()
+
+		handler.DeleteHandler(w, req)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 when DeletePrefix fails, got %d", w.Code)
+		}
+	})
+
+	t.Run("Delete returns 500 when Delete file fails in DB", func(t *testing.T) {
+		nodeRepo.nodes["/del_file_err.txt"] = &domain.Node{UserID: 1, Path: "/del_file_err.txt", Name: "del_file_err.txt", IsDir: false}
+		nodeRepo.deleteErr = os.ErrInvalid
+		defer func() { nodeRepo.deleteErr = nil }()
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/files?path=/del_file_err.txt", nil)
+		req = req.WithContext(middleware.WithUser(req.Context(), user))
+		w := httptest.NewRecorder()
+
+		handler.DeleteHandler(w, req)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 when Delete file fails, got %d", w.Code)
+		}
+	})
+
+	t.Run("Rename returns 500 when MovePrefix fails in DB", func(t *testing.T) {
+		nodeRepo.nodes["/rename_err.txt"] = &domain.Node{UserID: 1, Path: "/rename_err.txt", Name: "rename_err.txt"}
+		_, _ = st.Write(user.Username, "/rename_err.txt", bytes.NewReader([]byte("data")))
+		nodeRepo.movePrefixErr = os.ErrInvalid
+		defer func() { nodeRepo.movePrefixErr = nil }()
+
+		reqBody, _ := json.Marshal(RenameRequest{OldPath: "/rename_err.txt", NewPath: "/renamed_target.txt"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/files/rename", bytes.NewReader(reqBody))
+		req = req.WithContext(middleware.WithUser(req.Context(), user))
+		w := httptest.NewRecorder()
+
+		handler.RenameHandler(w, req)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 when MovePrefix fails, got %d", w.Code)
 		}
 	})
 }

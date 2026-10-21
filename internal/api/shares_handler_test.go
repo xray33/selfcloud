@@ -26,7 +26,10 @@ func (m *mockTransactor) WithTx(ctx context.Context, fn func(txRepo *repository.
 }
 
 type mockNodeRepo struct {
-	nodes map[string]*domain.Node
+	nodes           map[string]*domain.Node
+	deleteErr       error
+	deletePrefixErr error
+	movePrefixErr   error
 }
 
 func (m *mockNodeRepo) GetByPath(ctx context.Context, userID int64, path string) (*domain.Node, error) {
@@ -44,13 +47,23 @@ func (m *mockNodeRepo) Update(ctx context.Context, node *domain.Node) error {
 	return nil
 }
 func (m *mockNodeRepo) Delete(ctx context.Context, userID int64, path string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	delete(m.nodes, path)
 	return nil
 }
 func (m *mockNodeRepo) DeletePrefix(ctx context.Context, userID int64, pathPrefix string) error {
+	if m.deletePrefixErr != nil {
+		return m.deletePrefixErr
+	}
+	delete(m.nodes, pathPrefix)
 	return nil
 }
 func (m *mockNodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, newPrefix string) error {
+	if m.movePrefixErr != nil {
+		return m.movePrefixErr
+	}
 	if n, ok := m.nodes[oldPrefix]; ok {
 		delete(m.nodes, oldPrefix)
 		n.Path = newPrefix
