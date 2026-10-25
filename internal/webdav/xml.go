@@ -66,7 +66,7 @@ func FormatMultiStatus(basePath string, nodes []*domain.Node) ([]byte, error) {
 			// Encode each path segment individually to preserve slashes.
 			href = basePath + encodePath(node.Path)
 		}
-		if node.IsDir && len(href) > 0 && href[len(href)-1] != '/' {
+		if node.IsDir && !strings.HasSuffix(href, "/") {
 			href += "/"
 		}
 
@@ -77,7 +77,7 @@ func FormatMultiStatus(basePath string, nodes []*domain.Node) ([]byte, error) {
 
 		prop := Prop{
 			GetLastModified: node.MTime.UTC().Format(http.TimeFormat),
-			GetETag:         fmt.Sprintf(`"%s"`, node.ETag),
+			GetETag:         fmt.Sprintf("%q", node.ETag),
 			OCFileID:        node.FileID,
 			OCID:            node.FileID,
 			OCPermissions:   permissions,

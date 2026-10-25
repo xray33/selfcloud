@@ -131,15 +131,15 @@ func (r *oauthRepo) CreateToken(ctx context.Context, token *domain.OAuthToken) e
 	return nil
 }
 
-func (r *oauthRepo) GetTokenByAccessToken(ctx context.Context, accessToken string) (*domain.OAuthToken, error) {
+func (r *oauthRepo) getTokenWhere(ctx context.Context, where goqu.Ex) (*domain.OAuthToken, error) {
 	query, args, err := dialect.From("oauth_tokens").
 		Select("id", "client_id", "user_id", "access_token", "refresh_token", "access_token_expires_at", "refresh_token_expires_at", "created_at").
-		Where(goqu.Ex{"access_token": accessToken}).
+		Where(where).
 		Limit(1).
 		ToSQL()
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to build SQL for GetTokenByAccessToken: %w", err)
+		return nil, fmt.Errorf("failed to build SQL for oauth token query: %w", err)
 	}
 
 	t := &domain.OAuthToken{}
@@ -155,53 +155,13 @@ func (r *oauthRepo) GetTokenByAccessToken(ctx context.Context, accessToken strin
 	return t, nil
 }
 
-func (r *oauthRepo) GetTokenByRefreshToken(ctx context.Context, refreshToken string) (*domain.OAuthToken, error) {
-	query, args, err := dialect.From("oauth_tokens").
-		Select("id", "client_id", "user_id", "access_token", "refresh_token", "access_token_expires_at", "refresh_token_expires_at", "created_at").
-		Where(goqu.Ex{"refresh_token": refreshToken}).
-		Limit(1).
-		ToSQL()
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to build SQL for GetTokenByRefreshToken: %w", err)
-	}
-
-	t := &domain.OAuthToken{}
-	row := r.db.QueryRowContext(ctx, query, args...)
-	err = row.Scan(&t.ID, &t.ClientID, &t.UserID, &t.AccessToken, &t.RefreshToken, &t.AccessTokenExpiresAt, &t.RefreshTokenExpiresAt, &t.CreatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query oauth token: %w", err)
-	}
-
-	return t, nil
-}
-
-func (r *oauthRepo) DeleteTokenByAccessToken(ctx context.Context, accessToken string) error {
+func (r *oauthRepo) deleteTokensWhere(ctx context.Context, where goqu.Ex) error {
 	query, args, err := dialect.Delete("oauth_tokens").
-		Where(goqu.Ex{"access_token": accessToken}).
+		Where(where).
 		ToSQL()
 
 	if err != nil {
-		return fmt.Errorf("failed to build SQL for DeleteTokenByAccessToken: %w", err)
-	}
-
-	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("failed to delete oauth token: %w", err)
-	}
-
-	return nil
-}
-
-func (r *oauthRepo) DeleteTokensByUserID(ctx context.Context, userID int64) error {
-	query, args, err := dialect.Delete("oauth_tokens").
-		Where(goqu.Ex{"user_id": userID}).
-		ToSQL()
-
-	if err != nil {
-		return fmt.Errorf("failed to build SQL for DeleteTokensByUserID: %w", err)
+		return fmt.Errorf("failed to build SQL for delete oauth tokens: %w", err)
 	}
 
 	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
@@ -209,4 +169,20 @@ func (r *oauthRepo) DeleteTokensByUserID(ctx context.Context, userID int64) erro
 	}
 
 	return nil
+}
+
+func (r *oauthRepo) GetTokenByAccessToken(ctx context.Context, accessToken string) (*domain.OAuthToken, error) {
+	return r.getTokenWhere(ctx, goqu.Ex{"access_token": accessToken})
+}
+
+func (r *oauthRepo) GetTokenByRefreshToken(ctx context.Context, refreshToken string) (*domain.OAuthToken, error) {
+	return r.getTokenWhere(ctx, goqu.Ex{"refresh_token": refreshToken})
+}
+
+func (r *oauthRepo) DeleteTokenByAccessToken(ctx context.Context, accessToken string) error {
+	return r.deleteTokensWhere(ctx, goqu.Ex{"access_token": accessToken})
+}
+
+func (r *oauthRepo) DeleteTokensByUserID(ctx context.Context, userID int64) error {
+	return r.deleteTokensWhere(ctx, goqu.Ex{colUserID: userID})
 }

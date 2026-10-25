@@ -29,7 +29,7 @@ func NewSystemHandler(version, commit, buildDate string) *SystemHandler {
 }
 
 // SystemInfoHandler returns build version information.
-func (h *SystemHandler) SystemInfoHandler(w http.ResponseWriter, r *http.Request) {
+func (h *SystemHandler) SystemInfoHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"service": h.buildInfo,

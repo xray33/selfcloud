@@ -154,7 +154,7 @@ func (h *AuthHandler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Record(r.Context(), "web_logout", username, fmt.Sprintf("User %q logged out", username))
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeStatusOK(w)
 }
 
 func (h *AuthHandler) MeHandler(w http.ResponseWriter, r *http.Request) {
@@ -207,14 +207,4 @@ func generateSessionToken() string {
 
 func extractCookieOrHeaderToken(r *http.Request) string {
 	return middleware.ExtractSessionToken(r)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeJSONError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
 }

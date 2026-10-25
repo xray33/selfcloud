@@ -1,4 +1,4 @@
-.PHONY: all lint test test-coverage build docker-build docker-build-backend docker-build-web docker-up docker-down docker-logs docker-clean up-db down-db clean ui-install ui-build ui-lint ui-dev ci check
+.PHONY: all lint lint-maintainability test test-coverage build docker-build docker-build-backend docker-build-web docker-up docker-down docker-logs docker-clean up-db down-db clean ui-install ui-build ui-lint ui-dev ci check
 
 ENV_PATH := PATH="$(HOME)/.goenv/shims:/opt/homebrew/bin:/usr/local/bin:$(PATH)"
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "latest")
@@ -16,6 +16,9 @@ ci: lint test ui-lint ui-build build
 
 lint:
 	$(ENV_PATH) golangci-lint run ./...
+
+lint-maintainability:
+	./.agents/skills/go-maintainability-review/scripts/scan_maintainability.sh
 
 test:
 	$(ENV_PATH) go test -v ./...

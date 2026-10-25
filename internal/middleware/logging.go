@@ -71,18 +71,26 @@ func getClientIP(r *http.Request) string {
 	return GetClientIP(r)
 }
 
+func getTrustedProxyIP(r *http.Request) string {
+	if !IsProxyTrusted() {
+		return ""
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if clientIP := strings.TrimSpace(parts[0]); clientIP != "" {
+			return clientIP
+		}
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	return ""
+}
+
 // GetClientIP resolves the client IP address, only respecting proxy headers if trusted.
 func GetClientIP(r *http.Request) string {
-	if IsProxyTrusted() {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if clientIP := strings.TrimSpace(parts[0]); clientIP != "" {
-				return clientIP
-			}
-		}
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
+	if ip := getTrustedProxyIP(r); ip != "" {
+		return ip
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {

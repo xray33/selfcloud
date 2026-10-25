@@ -20,7 +20,8 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 
 ## 3. Directory Layout
 ```
-├── .golangci.yml           # Linter configuration
+├── .agents/                # AI Agent rules (.agents/rules/) & skills (.agents/skills/)
+├── .golangci.yml           # Strict Go linter & maintainability configuration
 ├── AGENTS.md               # AI Agent Guidelines (this file)
 ├── Dockerfile              # Multi-stage Docker build
 ├── Makefile                # Build, test, lint, and UI targets
@@ -59,7 +60,7 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 
 ## 5. Development & Testing Commands
 - **CI & Pre-Commit Check**: Run `make ci` (runs Go lint, Go tests, UI lint, UI build, and backend build).
-- **Linting**: Run `make lint` (Go linter) and `make ui-lint` / `make ui-build` (React typecheck & build).
+- **Linting**: Run `make lint` (strict Go linter including complexity, duplication, and clean-code checks), `make lint-maintainability` (categorized maintainability report), and `make ui-lint` / `make ui-build` (React typecheck & build).
 - **Tests**: Run `make test` (runs unit & functional tests against MariaDB configured via `DB_DSN`).
 - **Build**: Run `make build` (compiles `bin/selfcloud`) and `make ui-build` (builds `web/dist`).
 - **Docker Targets**:
@@ -77,9 +78,15 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
   - `./bin/selfcloud user <create|list|delete|update|set-password|set-email>` (user management)
   - `./bin/selfcloud reindex [--user <name>] [--remove-orphans]` (reconciles disk & DB)
 
-## 6. Coding Guidelines & Practices
+## 6. Coding Guidelines & Engineering Standards
 1. **Never guess API signatures**: Check standard library or existing domain models before modifying signatures.
-2. **Logging & Audit**: Use `slog` for structured logging. Always include request context / request ID when handling HTTP calls and record audit events via `audit.Record(ctx, ...)` before emitting access logs.
+2. **Logging & Audit**: Use `slog` for structured logging. Always include request context / request ID when handling HTTP calls and record audit events via `audit.Record(ctx, ...)` or `audit.RecordFailure(ctx, ...)` before emitting access logs / HTTP headers.
 3. **Database**: Use `goqu` for building SQL queries to keep DB operations clean and vendor-agnostic. Always update `name`, `path`, `parent_path`, and `updated_at` on node updates/moves. Apply schema changes via versioned migrations in `internal/db/db.go`.
-4. **Security**: Validate paths in storage driver to prevent directory traversal (`..`) and symlink escapes (`checkSymlinkEscape`). Enforce path length boundaries (`pathutil.ValidatePathLength`) to respect database index limits. Verify CSRF origins on mutating cookie endpoints and guard against reverse proxy header spoofing via `TRUST_PROXY`.
+4. **Security**: Validate paths in storage driver to prevent directory traversal (`..`) and symlink escapes (`checkSymlinkEscape`). Enforce path length boundaries (`pathutil.ValidatePathLength`) to respect database index limits. Verify CSRF origins on mutating cookie endpoints, guard against reverse proxy header spoofing via `TRUST_PROXY`, and use `domain.CheckDummyPassword` on unknown-user login attempts.
 5. **Frontend Reference**: See [`web/AGENTS.md`](web/AGENTS.md) when making changes inside the `web/` subproject.
+6. **Go Maintainability & Clean Code Standards** (enforced automatically by `make lint` via `.golangci.yml`):
+   - **Complexity & Size Caps**: Cognitive complexity `gocognit` $\le 20$, cyclomatic complexity `gocyclo` $\le 15$, function length `funlen` $\le 80$ lines / $\le 50$ statements, nesting depth `nestif` $\le 4$. Flatten control flow with early-return guard clauses (`if err != nil { return err }`) and decompose handlers into small, single-responsibility helpers.
+   - **Zero Duplication & Magic Literals**: `dupl` threshold is 80 tokens; reuse shared repository helpers (`get*Where`, `delete*Where`), column constants (`colUserID`, `colPath`, `colUpdatedAt`, `colToken`), and HTTP helpers (`writeJSON`, `writeJSONError`, `writeStatusOK`, `resolveBaseURL`). Keep HTML/CSS and SQL templates in package-level `const` declarations or dedicated helpers.
+   - **Go 1.26 Idioms**: Use `0o755` octal literals, `errors.New` for static errors, `%w` + `errors.Is`/`errors.As` for error wrapping, `%q` in `fmt.Sprintf` instead of `\"%s\"`, omit unused receiver names (`func (*Handler) helper(...)`), and never call `os.Exit` inside functions with active `defer` statements.
+
+@[Go Engineering Standards](.agents/rules/go-engineering-standards.md)

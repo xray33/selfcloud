@@ -25,7 +25,7 @@ func (h *OCSHandler) WithConfig(cfg *config.Config) *OCSHandler {
 	return h
 }
 
-func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
+func (*OCSHandler) StatusHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	status := map[string]any{
 		"installed":      true,
@@ -39,7 +39,7 @@ func (h *OCSHandler) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(status)
 }
 
-func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
+func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	oauthEnabled := true
@@ -95,7 +95,7 @@ func (h *OCSHandler) CapabilitiesHandler(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *OCSHandler) UserHandler(w http.ResponseWriter, r *http.Request) {
+func (*OCSHandler) UserHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	user := middleware.UserFromContext(r.Context())
 

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"selfcloud/internal/audit"
 	"selfcloud/internal/domain"
@@ -62,22 +63,13 @@ func NewOAuthHandler(
 }
 
 // OpenIDConfigurationHandler serves /.well-known/openid-configuration discovery document.
-func (h *OAuthHandler) OpenIDConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+func (*OAuthHandler) OpenIDConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	host := r.Host
-	if host == "" {
-		host = "localhost:8080"
-	}
-
-	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+	baseURL := resolveBaseURL(r)
 
 	doc := map[string]any{
 		"issuer":                                baseURL,
@@ -97,21 +89,13 @@ func (h *OAuthHandler) OpenIDConfigurationHandler(w http.ResponseWriter, r *http
 }
 
 // WebFingerHandler serves /.well-known/webfinger for OIDC issuer discovery (used by mobile apps).
-func (h *OAuthHandler) WebFingerHandler(w http.ResponseWriter, r *http.Request) {
+func (*OAuthHandler) WebFingerHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	host := r.Host
-	if host == "" {
-		host = "localhost:8080"
-	}
-	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+	baseURL := resolveBaseURL(r)
 
 	doc := map[string]any{
 		"subject": baseURL,
@@ -169,114 +153,97 @@ func (h *OAuthHandler) handleAuthorizeGet(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check if already authenticated via session cookie
-	var currentUser *domain.User
-	token := middleware.ExtractSessionToken(r)
-	if token != "" {
-		sess, err := h.sessionRepo.GetByToken(r.Context(), token)
-		if err == nil && sess != nil && !sess.IsExpired() {
-			user, err := h.userRepo.GetByID(r.Context(), sess.UserID)
-			if err == nil && user != nil {
-				currentUser = user
-			}
-		}
-	}
+	currentUser := h.resolveActiveUser(r)
 
-	h.renderAuthorizePage(w, r, currentUser, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, loginHint, "")
+	h.renderAuthorizePage(w, currentUser, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, loginHint, "")
 }
 
-func (h *OAuthHandler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
+func (h *OAuthHandler) resolveActiveUser(r *http.Request) *domain.User {
+	token := middleware.ExtractSessionToken(r)
+	if token == "" {
+		return nil
 	}
-
-	clientID := r.FormValue("client_id")
-	redirectURI := r.FormValue("redirect_uri")
-	codeChallenge := r.FormValue("code_challenge")
-	codeChallengeMethod := r.FormValue("code_challenge_method")
-	state := r.FormValue("state")
-	scope := r.FormValue("scope")
-	action := r.FormValue("action")
-
-	if !h.validateClient(clientID) || !validateRedirectURI(redirectURI) {
-		http.Error(w, "Invalid client or redirect URI", http.StatusBadRequest)
-		return
+	sess, err := h.sessionRepo.GetByToken(r.Context(), token)
+	if err != nil || sess == nil || sess.IsExpired() {
+		return nil
 	}
+	u, err := h.userRepo.GetByID(r.Context(), sess.UserID)
+	if err != nil {
+		return nil
+	}
+	return u
+}
 
-	if action == "cancel" {
-		parsedRedirect, err := url.Parse(redirectURI)
-		if err == nil {
-			rq := parsedRedirect.Query()
-			rq.Set("error", "access_denied")
-			if state != "" {
-				rq.Set("state", state)
-			}
-			parsedRedirect.RawQuery = rq.Encode()
-			http.Redirect(w, r, parsedRedirect.String(), http.StatusFound)
-			return
-		}
+func handleAuthorizeCancel(w http.ResponseWriter, r *http.Request, redirectURI, state string) {
+	parsedRedirect, err := url.Parse(redirectURI)
+	if err != nil {
 		http.Error(w, "Access Denied", http.StatusForbidden)
 		return
 	}
+	rq := parsedRedirect.Query()
+	rq.Set("error", "access_denied")
+	if state != "" {
+		rq.Set("state", state)
+	}
+	parsedRedirect.RawQuery = rq.Encode()
+	http.Redirect(w, r, parsedRedirect.String(), http.StatusFound)
+}
 
-	var user *domain.User
+func (h *OAuthHandler) authenticateFormUser(
+	w http.ResponseWriter,
+	r *http.Request,
+	clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod string,
+) *domain.User {
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
 
-	// Check if user is already logged in
-	token := middleware.ExtractSessionToken(r)
-	if token != "" {
-		sess, err := h.sessionRepo.GetByToken(r.Context(), token)
-		if err == nil && sess != nil && !sess.IsExpired() {
-			u, err := h.userRepo.GetByID(r.Context(), sess.UserID)
-			if err == nil && u != nil {
-				user = u
-			}
-		}
+	if username == "" || password == "" {
+		h.renderAuthorizePage(w, nil, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, username, "Username and password are required")
+		return nil
 	}
 
-	// If not logged in, authenticate via submitted form credentials
-	if user == nil {
-		username := strings.TrimSpace(r.FormValue("username"))
-		password := r.FormValue("password")
-
-		if username == "" || password == "" {
-			h.renderAuthorizePage(w, r, nil, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, username, "Username and password are required")
-			return
+	u, err := h.userRepo.GetByUsername(r.Context(), username)
+	if err != nil || u == nil || !u.CheckPassword(password) {
+		if u == nil {
+			domain.CheckDummyPassword(password)
 		}
-
-		u, err := h.userRepo.GetByUsername(r.Context(), username)
-		if err != nil || u == nil || !u.CheckPassword(password) {
-			if u == nil {
-				domain.CheckDummyPassword(password)
-			}
-			audit.RecordFailure(r.Context(), "oauth_login_failed", username, "Invalid credentials during OAuth authorization")
-			h.renderAuthorizePage(w, r, nil, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, username, "Invalid username or password")
-			return
-		}
-		user = u
-
-		// Issue a web session cookie so the user stays authenticated in browser
-		sessionToken := generateSecureToken(32)
-		sessionExpiry := time.Now().Add(7 * 24 * time.Hour)
-		_ = h.sessionRepo.Create(r.Context(), &domain.Session{
-			Token:     sessionToken,
-			UserID:    user.ID,
-			ExpiresAt: sessionExpiry,
-			CreatedAt: time.Now(),
-		})
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     middleware.SessionCookieName,
-			Value:    sessionToken,
-			Path:     "/",
-			Expires:  sessionExpiry,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   middleware.IsSecureRequest(r),
-		})
+		audit.RecordFailure(r.Context(), "oauth_login_failed", username, "Invalid credentials during OAuth authorization")
+		h.renderAuthorizePage(w, nil, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod, username, "Invalid username or password")
+		return nil
 	}
 
-	// Generate one-time authorization code
-	code := generateSecureToken(32)
+	h.issueSessionCookie(w, r, u)
+	return u
+}
+
+func (h *OAuthHandler) issueSessionCookie(w http.ResponseWriter, r *http.Request, user *domain.User) {
+	sessionToken := generateSecureToken()
+	sessionExpiry := time.Now().Add(7 * 24 * time.Hour)
+	_ = h.sessionRepo.Create(r.Context(), &domain.Session{
+		Token:     sessionToken,
+		UserID:    user.ID,
+		ExpiresAt: sessionExpiry,
+		CreatedAt: time.Now(),
+	})
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.SessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		Expires:  sessionExpiry,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   middleware.IsSecureRequest(r),
+	})
+}
+
+func (h *OAuthHandler) issueOAuthCodeAndRedirect(
+	w http.ResponseWriter,
+	r *http.Request,
+	user *domain.User,
+	clientID, redirectURI, codeChallenge, codeChallengeMethod, state, scope string,
+) {
+	code := generateSecureToken()
 	authCode := &domain.OAuthAuthCode{
 		Code:                code,
 		ClientID:            clientID,
@@ -311,6 +278,41 @@ func (h *OAuthHandler) handleAuthorizePost(w http.ResponseWriter, r *http.Reques
 	parsedRedirect.RawQuery = rq.Encode()
 
 	http.Redirect(w, r, parsedRedirect.String(), http.StatusFound)
+}
+
+func (h *OAuthHandler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	clientID := r.FormValue("client_id")
+	redirectURI := r.FormValue("redirect_uri")
+	codeChallenge := r.FormValue("code_challenge")
+	codeChallengeMethod := r.FormValue("code_challenge_method")
+	state := r.FormValue("state")
+	scope := r.FormValue("scope")
+	action := r.FormValue("action")
+
+	if !h.validateClient(clientID) || !validateRedirectURI(redirectURI) {
+		http.Error(w, "Invalid client or redirect URI", http.StatusBadRequest)
+		return
+	}
+
+	if action == "cancel" {
+		handleAuthorizeCancel(w, r, redirectURI, state)
+		return
+	}
+
+	user := h.resolveActiveUser(r)
+	if user == nil {
+		user = h.authenticateFormUser(w, r, clientID, redirectURI, state, scope, codeChallenge, codeChallengeMethod)
+		if user == nil {
+			return
+		}
+	}
+
+	h.issueOAuthCodeAndRedirect(w, r, user, clientID, redirectURI, codeChallenge, codeChallengeMethod, state, scope)
 }
 
 // TokenHandler handles POST requests for token exchange (authorization_code and refresh_token).
@@ -426,8 +428,8 @@ func (h *OAuthHandler) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Re
 }
 
 func (h *OAuthHandler) issueTokens(w http.ResponseWriter, r *http.Request, userID int64, clientID, scope string) {
-	accessToken := generateSecureToken(32)
-	refreshToken := generateSecureToken(32)
+	accessToken := generateSecureToken()
+	refreshToken := generateSecureToken()
 	accessExpiresAt := time.Now().Add(DefaultAccessTokenTTL)
 	refreshExpiresAt := time.Now().Add(DefaultRefreshTokenTTL)
 
@@ -475,7 +477,7 @@ func (h *OAuthHandler) issueTokens(w http.ResponseWriter, r *http.Request, userI
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *OAuthHandler) extractClientCredentials(r *http.Request) (string, string) {
+func (*OAuthHandler) extractClientCredentials(r *http.Request) (string, string) {
 	clientID, clientSecret, ok := r.BasicAuth()
 	if ok {
 		return clientID, clientSecret
@@ -483,11 +485,11 @@ func (h *OAuthHandler) extractClientCredentials(r *http.Request) (string, string
 	return r.FormValue("client_id"), r.FormValue("client_secret")
 }
 
-func (h *OAuthHandler) validateClient(clientID string) bool {
+func (*OAuthHandler) validateClient(clientID string) bool {
 	return clientID != ""
 }
 
-func (h *OAuthHandler) validateClientSecret(clientID, clientSecret string) bool {
+func (*OAuthHandler) validateClientSecret(clientID, clientSecret string) bool {
 	switch clientID {
 	case DefaultOwnCloudClientID:
 		if clientSecret == "" || clientSecret == DefaultOwnCloudClientSecret {
@@ -525,12 +527,12 @@ func validateRedirectURI(rawURL string) bool {
 	// Native desktop apps per RFC 8252 use loopback with dynamic port
 	hostname := u.Hostname()
 	if strings.EqualFold(hostname, "localhost") || hostname == "127.0.0.1" || hostname == "::1" {
-		return scheme == "http" || scheme == "https"
+		return scheme == schemeHTTP || scheme == schemeHTTPS
 	}
 
 	ip := net.ParseIP(hostname)
 	if ip != nil && ip.IsLoopback() {
-		return scheme == "http" || scheme == "https"
+		return scheme == schemeHTTP || scheme == schemeHTTPS
 	}
 
 	return false
@@ -562,13 +564,13 @@ func verifyPKCE(verifier, challenge, method string) bool {
 	}
 }
 
-func generateSecureToken(byteLength int) string {
-	b := make([]byte, byteLength)
+func generateSecureToken() string {
+	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
-func (h *OAuthHandler) writeOAuthError(w http.ResponseWriter, errCode, errDesc string, status int) {
+func (*OAuthHandler) writeOAuthError(w http.ResponseWriter, errCode, errDesc string, status int) {
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -577,93 +579,96 @@ func (h *OAuthHandler) writeOAuthError(w http.ResponseWriter, errCode, errDesc s
 	})
 }
 
-func (h *OAuthHandler) renderAuthorizePage(
-	w http.ResponseWriter,
-	r *http.Request,
-	user *domain.User,
-	clientID, redirectURI, state, scope, challenge, method, loginHint, errMsg string,
-) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	escapedError := ""
-	if errMsg != "" {
-		escapedError = fmt.Sprintf(`
-			<div class="error-box">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-				<span>%s</span>
-			</div>
-		`, html.EscapeString(errMsg))
+func userInitial(username string) string {
+	if username == "" {
+		return "U"
 	}
-
-	bodyContent := ""
-	if user != nil {
-		initial := "U"
-		if len(user.Username) > 0 {
-			initial = strings.ToUpper(string([]rune(user.Username)[0]))
-		}
-		bodyContent = fmt.Sprintf(`
-			<p class="app-info">
-				Application <span class="app-name">%s</span> is requesting access to your account:
-			</p>
-			<div class="user-badge-card">
-				<div class="user-avatar">%s</div>
-				<div class="user-details">
-					<div class="user-name">%s</div>
-					<div class="user-status">Currently signed in</div>
-				</div>
-			</div>
-			<div class="btn-group">
-				<button type="submit" name="action" value="authorize" class="btn-primary">
-					<span>Authorize</span>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-				</button>
-				<button type="submit" name="action" value="cancel" class="btn-secondary">
-					Cancel
-				</button>
-			</div>
-		`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(initial), html.EscapeString(user.Username))
-	} else {
-		usernameAutofocus := "autofocus"
-		passwordAutofocus := ""
-		if loginHint != "" {
-			usernameAutofocus = ""
-			passwordAutofocus = "autofocus"
-		}
-		bodyContent = fmt.Sprintf(`
-			<p class="app-info">
-				Sign in to your SelfCloud account to connect <span class="app-name">%s</span>:
-			</p>
-			<div style="margin-bottom: 20px;">
-				<label class="form-label">Username</label>
-				<div class="input-wrapper">
-					<div class="input-icon">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-					</div>
-					<input type="text" name="username" value="%s" %s required placeholder="e.g. admin" class="form-input" />
-				</div>
-			</div>
-			<div style="margin-bottom: 24px;">
-				<label class="form-label">Password</label>
-				<div class="input-wrapper">
-					<div class="input-icon">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-					</div>
-					<input type="password" name="password" %s required placeholder="••••••••" class="form-input" />
-				</div>
-			</div>
-			<div class="btn-group">
-				<button type="submit" name="action" value="authorize" class="btn-primary">
-					<span>Sign In & Authorize</span>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-				</button>
-				<button type="submit" name="action" value="cancel" class="btn-secondary">
-					Cancel
-				</button>
-			</div>
-		`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(loginHint), usernameAutofocus, passwordAutofocus)
+	firstRune, _ := utf8.DecodeRuneInString(username)
+	if firstRune == utf8.RuneError {
+		return "U"
 	}
+	return strings.ToUpper(string(firstRune))
+}
 
-	page := fmt.Sprintf(`<!DOCTYPE html>
+func renderErrorBox(errMsg string) string {
+	if errMsg == "" {
+		return ""
+	}
+	return fmt.Sprintf(`
+		<div class="error-box">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+			<span>%s</span>
+		</div>
+	`, html.EscapeString(errMsg))
+}
+
+func renderSignedInBody(clientID string, user *domain.User) string {
+	initial := userInitial(user.Username)
+	return fmt.Sprintf(`
+		<p class="app-info">
+			Application <span class="app-name">%s</span> is requesting access to your account:
+		</p>
+		<div class="user-badge-card">
+			<div class="user-avatar">%s</div>
+			<div class="user-details">
+				<div class="user-name">%s</div>
+				<div class="user-status">Currently signed in</div>
+			</div>
+		</div>
+		<div class="btn-group">
+			<button type="submit" name="action" value="authorize" class="btn-primary">
+				<span>Authorize</span>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+			</button>
+			<button type="submit" name="action" value="cancel" class="btn-secondary">
+				Cancel
+			</button>
+		</div>
+	`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(initial), html.EscapeString(user.Username))
+}
+
+func renderLoginFormBody(clientID, loginHint string) string {
+	usernameAutofocus := "autofocus"
+	passwordAutofocus := ""
+	if loginHint != "" {
+		usernameAutofocus = ""
+		passwordAutofocus = "autofocus"
+	}
+	return fmt.Sprintf(`
+		<p class="app-info">
+			Sign in to your SelfCloud account to connect <span class="app-name">%s</span>:
+		</p>
+		<div style="margin-bottom: 20px;">
+			<label class="form-label">Username</label>
+			<div class="input-wrapper">
+				<div class="input-icon">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+				</div>
+				<input type="text" name="username" value="%s" %s required placeholder="e.g. admin" class="form-input" />
+			</div>
+		</div>
+		<div style="margin-bottom: 24px;">
+			<label class="form-label">Password</label>
+			<div class="input-wrapper">
+				<div class="input-icon">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+				</div>
+				<input type="password" name="password" %s required placeholder="••••••••" class="form-input" />
+			</div>
+		</div>
+		<div class="btn-group">
+			<button type="submit" name="action" value="authorize" class="btn-primary">
+				<span>Sign In & Authorize</span>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+			</button>
+			<button type="submit" name="action" value="cancel" class="btn-secondary">
+				Cancel
+			</button>
+		</div>
+	`, html.EscapeString(getClientDisplayName(clientID)), html.EscapeString(loginHint), usernameAutofocus, passwordAutofocus)
+}
+
+const authorizePageTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="utf-8">
@@ -886,7 +891,31 @@ func (h *OAuthHandler) renderAuthorizePage(
 		</div>
 	</div>
 </body>
-</html>`, escapedError, html.EscapeString(clientID), html.EscapeString(redirectURI), html.EscapeString(state), html.EscapeString(scope), html.EscapeString(challenge), html.EscapeString(method), bodyContent)
+</html>`
+
+func (*OAuthHandler) renderAuthorizePage(
+	w http.ResponseWriter,
+	user *domain.User,
+	clientID, redirectURI, state, scope, challenge, method, loginHint, errMsg string,
+) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	bodyContent := renderLoginFormBody(clientID, loginHint)
+	if user != nil {
+		bodyContent = renderSignedInBody(clientID, user)
+	}
+
+	page := fmt.Sprintf(
+		authorizePageTemplate,
+		renderErrorBox(errMsg),
+		html.EscapeString(clientID),
+		html.EscapeString(redirectURI),
+		html.EscapeString(state),
+		html.EscapeString(scope),
+		html.EscapeString(challenge),
+		html.EscapeString(method),
+		bodyContent,
+	)
 
 	_, _ = w.Write([]byte(page))
 }

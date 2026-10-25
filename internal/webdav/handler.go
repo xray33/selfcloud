@@ -1,6 +1,7 @@
 package webdav
 
 import (
+	"context"
 	"crypto/md5"
 	"errors"
 	"fmt"
@@ -32,11 +33,11 @@ type WebDAVHandler struct {
 	wwwAuthHeader string
 }
 
-func NewWebDAVHandler(transactor repository.Transactor, nodeRepo repository.NodeRepository, storage storage.Storage, logger *slog.Logger) *WebDAVHandler {
+func NewWebDAVHandler(transactor repository.Transactor, nodeRepo repository.NodeRepository, blobStore storage.Storage, logger *slog.Logger) *WebDAVHandler {
 	return &WebDAVHandler{
 		transactor:    transactor,
 		nodeRepo:      nodeRepo,
-		storage:       storage,
+		storage:       blobStore,
 		logger:        logger,
 		maxUploadSize: config.DefaultMaxUploadSize,
 	}
@@ -125,9 +126,9 @@ func (h *WebDAVHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "MKCOL":
 		h.handleMkcol(rec, r, user, relPath)
 	case "MOVE":
-		h.handleMove(rec, r, user, basePath, relPath)
+		h.handleMove(rec, r, user, relPath)
 	case "COPY":
-		h.handleCopy(rec, r, user, basePath, relPath)
+		h.handleCopy(rec, r, user, relPath)
 	case "PROPPATCH":
 		h.handleProppatch(rec, r, user, basePath, relPath)
 	default:
@@ -135,7 +136,7 @@ func (h *WebDAVHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *WebDAVHandler) handleOptions(w http.ResponseWriter, r *http.Request) {
+func (*WebDAVHandler) handleOptions(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -219,8 +220,8 @@ func (h *WebDAVHandler) handleGet(w http.ResponseWriter, r *http.Request, user *
 	}
 	defer rc.Close()
 
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, node.ETag))
-	w.Header().Set("OC-ETag", fmt.Sprintf(`"%s"`, node.ETag))
+	w.Header().Set("ETag", fmt.Sprintf("%q", node.ETag))
+	w.Header().Set("OC-ETag", fmt.Sprintf("%q", node.ETag))
 	w.Header().Set("OC-FileId", node.FileID)
 	if node.ContentType != "" {
 		w.Header().Set("Content-Type", node.ContentType)
@@ -243,20 +244,16 @@ func (h *WebDAVHandler) handleGet(w http.ResponseWriter, r *http.Request, user *
 	http.ServeContent(w, r, path.Base(node.Path), node.MTime, rc)
 }
 
-func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) {
-	// Parse optional ownCloud client timestamp header
-	mtime := time.Now()
+func parsePutMTime(r *http.Request) time.Time {
 	if ocMTime := r.Header.Get("X-OC-MTime"); ocMTime != "" {
 		if sec, err := strconv.ParseInt(ocMTime, 10, 64); err == nil {
-			mtime = time.Unix(sec, 0)
+			return time.Unix(sec, 0)
 		}
 	}
+	return time.Now()
+}
 
-	if err := pathutil.ValidatePathLength(relPath); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
+func (h *WebDAVHandler) savePutBlob(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) (int64, error) {
 	maxSize := h.maxUploadSize
 	if maxSize <= 0 {
 		maxSize = 10 << 30
@@ -271,7 +268,7 @@ func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *
 				fmt.Sprintf("User %q upload failed: payload exceeds maximum allowed size of %s", user.Username, pathutil.FormatBytes(maxSize)),
 			)
 			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
-			return
+			return 0, err
 		}
 		h.logger.Error("PUT storage write failed", slog.String("path", relPath), slog.Any("error", err))
 		audit.RecordFailure(r.Context(), "file_upload", relPath,
@@ -279,24 +276,21 @@ func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *
 			slog.Any("error", err),
 		)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		return 0, err
 	}
+	return size, nil
+}
 
-	etag := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%s-%d-%d", relPath, size, mtime.UnixNano()))))
-	contentType := r.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
+func (h *WebDAVHandler) savePutNode(ctx context.Context, user *domain.User, relPath, contentType, etag string, size int64, mtime time.Time) (bool, error) {
 	parentPath, name := pathutil.SplitPath(relPath)
 	isNew := false
 
-	err = h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		if err := tx.Nodes.EnsureParentDirectoryExists(r.Context(), user.ID, parentPath); err != nil {
+	err := h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		if err := tx.Nodes.EnsureParentDirectoryExists(ctx, user.ID, parentPath); err != nil {
 			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
 		}
 
-		existingNode, err := tx.Nodes.GetByPath(r.Context(), user.ID, relPath)
+		existingNode, err := tx.Nodes.GetByPath(ctx, user.ID, relPath)
 		if err != nil {
 			return err
 		}
@@ -316,22 +310,64 @@ func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *
 				MTime:       mtime,
 				ContentType: contentType,
 			}
-			if err := tx.Nodes.Create(r.Context(), node); err != nil {
+			if err := tx.Nodes.Create(ctx, node); err != nil {
 				return err
 			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
+			return tx.Nodes.TouchAncestors(ctx, user.ID, relPath)
 		}
 
 		existingNode.Size = size
 		existingNode.ETag = etag
 		existingNode.MTime = mtime
 		existingNode.ContentType = contentType
-		if err := tx.Nodes.Update(r.Context(), existingNode); err != nil {
+		if err := tx.Nodes.Update(ctx, existingNode); err != nil {
 			return err
 		}
-		return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
+		return tx.Nodes.TouchAncestors(ctx, user.ID, relPath)
 	})
+	return isNew, err
+}
 
+func (*WebDAVHandler) recordPutAudit(ctx context.Context, user *domain.User, relPath, contentType, etag string, size int64, isNew bool) {
+	metrics.BlobBytesUploaded.WithLabelValues("webdav").Add(float64(size))
+
+	if isNew {
+		audit.Record(ctx, "file_create", relPath,
+			fmt.Sprintf("User %q uploaded new file %q (%s, %s)", user.Username, relPath, contentType, pathutil.FormatBytes(size)),
+			slog.Int64("size_bytes", size),
+			slog.String("content_type", contentType),
+			slog.String("etag", etag),
+		)
+	} else {
+		audit.Record(ctx, "file_update", relPath,
+			fmt.Sprintf("User %q updated existing file %q (%s, %s)", user.Username, relPath, contentType, pathutil.FormatBytes(size)),
+			slog.Int64("size_bytes", size),
+			slog.String("content_type", contentType),
+			slog.String("etag", etag),
+		)
+	}
+}
+
+func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) {
+	mtime := parsePutMTime(r)
+
+	if err := pathutil.ValidatePathLength(relPath); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	size, err := h.savePutBlob(w, r, user, relPath)
+	if err != nil {
+		return
+	}
+
+	etag := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%s-%d-%d", relPath, size, mtime.UnixNano()))))
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	isNew, err := h.savePutNode(r.Context(), user, relPath, contentType, etag, size, mtime)
 	if err != nil {
 		if isNew {
 			if delErr := h.storage.Delete(user.Username, relPath); delErr != nil {
@@ -347,31 +383,30 @@ func (h *WebDAVHandler) handlePut(w http.ResponseWriter, r *http.Request, user *
 		return
 	}
 
-	metrics.BlobBytesUploaded.WithLabelValues("webdav").Add(float64(size))
+	h.recordPutAudit(r.Context(), user, relPath, contentType, etag, size, isNew)
 
-	if isNew {
-		audit.Record(r.Context(), "file_create", relPath,
-			fmt.Sprintf("User %q uploaded new file %q (%s, %s)", user.Username, relPath, contentType, pathutil.FormatBytes(size)),
-			slog.Int64("size_bytes", size),
-			slog.String("content_type", contentType),
-			slog.String("etag", etag),
-		)
-	} else {
-		audit.Record(r.Context(), "file_update", relPath,
-			fmt.Sprintf("User %q updated existing file %q (%s, %s)", user.Username, relPath, contentType, pathutil.FormatBytes(size)),
-			slog.Int64("size_bytes", size),
-			slog.String("content_type", contentType),
-			slog.String("etag", etag),
-		)
-	}
-
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, etag))
-	w.Header().Set("OC-ETag", fmt.Sprintf(`"%s"`, etag))
+	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
+	w.Header().Set("OC-ETag", fmt.Sprintf("%q", etag))
 	if isNew {
 		w.WriteHeader(http.StatusCreated)
 	} else {
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (h *WebDAVHandler) deleteNodeMetadata(ctx context.Context, userID int64, relPath string, isDir bool) error {
+	return h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		if isDir {
+			if err := tx.Nodes.DeletePrefix(ctx, userID, relPath); err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Nodes.Delete(ctx, userID, relPath); err != nil {
+				return err
+			}
+		}
+		return tx.Nodes.TouchAncestors(ctx, userID, relPath)
+	})
 }
 
 func (h *WebDAVHandler) handleDelete(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) {
@@ -384,26 +419,29 @@ func (h *WebDAVHandler) handleDelete(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
+	var childCount int
 	if node.IsDir {
-		// Count children before deletion for the audit log.
 		children, _ := h.nodeRepo.ListByParentPath(r.Context(), user.ID, relPath)
-		childCount := len(children)
+		childCount = len(children)
+	}
 
-		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			if err := tx.Nodes.DeletePrefix(r.Context(), user.ID, relPath); err != nil {
-				return err
-			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
-		}); err != nil {
-			h.logger.Error("DELETE dir database transaction failed", slog.String("path", relPath), slog.Any("error", err))
-			audit.RecordFailure(r.Context(), "dir_delete", relPath,
-				fmt.Sprintf("User %q failed to delete directory metadata for %q: database error", user.Username, relPath),
-				slog.Any("error", err),
-			)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
+	if err := h.deleteNodeMetadata(r.Context(), user.ID, relPath, node.IsDir); err != nil {
+		action := "file_delete"
+		entity := "file"
+		if node.IsDir {
+			action = "dir_delete"
+			entity = "directory"
 		}
+		h.logger.Error(fmt.Sprintf("DELETE %s database transaction failed", entity), slog.String("path", relPath), slog.Any("error", err))
+		audit.RecordFailure(r.Context(), action, relPath,
+			fmt.Sprintf("User %q failed to delete %s metadata for %q: database error", user.Username, entity, relPath),
+			slog.Any("error", err),
+		)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
+	if node.IsDir {
 		_ = h.storage.DeleteAll(user.Username, relPath)
 
 		audit.Record(r.Context(), "dir_delete", relPath,
@@ -411,21 +449,6 @@ func (h *WebDAVHandler) handleDelete(w http.ResponseWriter, r *http.Request, use
 			slog.Int("child_count", childCount),
 		)
 	} else {
-		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			if err := tx.Nodes.Delete(r.Context(), user.ID, relPath); err != nil {
-				return err
-			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, relPath)
-		}); err != nil {
-			h.logger.Error("DELETE file database transaction failed", slog.String("path", relPath), slog.Any("error", err))
-			audit.RecordFailure(r.Context(), "file_delete", relPath,
-				fmt.Sprintf("User %q failed to delete file metadata for %q: database error", user.Username, relPath),
-				slog.Any("error", err),
-			)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
 		_ = h.storage.Delete(user.Username, relPath)
 
 		audit.Record(r.Context(), "file_delete", relPath,
@@ -515,23 +538,31 @@ func (h *WebDAVHandler) handleMkcol(w http.ResponseWriter, r *http.Request, user
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *WebDAVHandler) handleMove(w http.ResponseWriter, r *http.Request, user *domain.User, basePath, relPath string) {
+func resolveDestinationHeader(w http.ResponseWriter, r *http.Request, username string) (string, bool) {
 	destHeader := r.Header.Get("Destination")
 	if destHeader == "" {
 		http.Error(w, "Bad Request: missing Destination header", http.StatusBadRequest)
-		return
+		return "", false
 	}
 
 	destURL, err := url.Parse(destHeader)
 	if err != nil {
 		http.Error(w, "Bad Request: invalid Destination header", http.StatusBadRequest)
-		return
+		return "", false
 	}
 
-	_, destRelPath := extractPaths(destURL.Path, user.Username)
+	_, destRelPath := extractPaths(destURL.Path, username)
 
 	if err := pathutil.ValidatePathLength(destRelPath); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return "", false
+	}
+	return destRelPath, true
+}
+
+func (h *WebDAVHandler) handleMove(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) {
+	destRelPath, ok := resolveDestinationHeader(w, r, user.Username)
+	if !ok {
 		return
 	}
 
@@ -577,23 +608,76 @@ func (h *WebDAVHandler) handleMove(w http.ResponseWriter, r *http.Request, user 
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *WebDAVHandler) handleCopy(w http.ResponseWriter, r *http.Request, user *domain.User, basePath, relPath string) {
-	destHeader := r.Header.Get("Destination")
-	if destHeader == "" {
-		http.Error(w, "Bad Request: missing Destination header", http.StatusBadRequest)
-		return
-	}
-
-	destURL, err := url.Parse(destHeader)
+func (h *WebDAVHandler) copyFileBlob(w http.ResponseWriter, r *http.Request, user *domain.User, relPath, destRelPath string) (int64, error) {
+	rc, err := h.storage.Read(user.Username, relPath)
 	if err != nil {
-		http.Error(w, "Bad Request: invalid Destination header", http.StatusBadRequest)
-		return
+		audit.RecordFailure(r.Context(), "file_copy", relPath,
+			fmt.Sprintf("User %q failed to copy %q to %q: source not found in storage", user.Username, relPath, destRelPath),
+			slog.String("destination", destRelPath),
+		)
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return 0, err
+	}
+	defer rc.Close()
+
+	size, err := h.storage.Write(user.Username, destRelPath, rc)
+	if err != nil {
+		audit.RecordFailure(r.Context(), "file_copy", relPath,
+			fmt.Sprintf("User %q failed to copy %q to %q: storage write error", user.Username, relPath, destRelPath),
+			slog.String("destination", destRelPath),
+			slog.Any("error", err),
+		)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return 0, err
+	}
+	return size, nil
+}
+
+func (h *WebDAVHandler) persistCopiedFileNode(
+	ctx context.Context,
+	user *domain.User,
+	destRelPath, contentType string,
+	size int64,
+	existingDest *domain.Node,
+) error {
+	parentPath, name := pathutil.SplitPath(destRelPath)
+	fileID := pathutil.GenerateFileID(user.ID)
+	etag := fmt.Sprintf("%x", md5.Sum([]byte(destRelPath+fileID)))
+
+	node := &domain.Node{
+		UserID:      user.ID,
+		Path:        destRelPath,
+		ParentPath:  parentPath,
+		Name:        name,
+		IsDir:       false,
+		Size:        size,
+		ETag:        etag,
+		FileID:      fileID,
+		MTime:       time.Now(),
+		ContentType: contentType,
 	}
 
-	_, destRelPath := extractPaths(destURL.Path, user.Username)
+	return h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		if err := tx.Nodes.EnsureParentDirectoryExists(ctx, user.ID, parentPath); err != nil {
+			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
+		}
+		if existingDest != nil {
+			node.ID = existingDest.ID
+			if err := tx.Nodes.Update(ctx, node); err != nil {
+				return err
+			}
+			return tx.Nodes.TouchAncestors(ctx, user.ID, destRelPath)
+		}
+		if err := tx.Nodes.Create(ctx, node); err != nil {
+			return err
+		}
+		return tx.Nodes.TouchAncestors(ctx, user.ID, destRelPath)
+	})
+}
 
-	if err := pathutil.ValidatePathLength(destRelPath); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+func (h *WebDAVHandler) handleCopy(w http.ResponseWriter, r *http.Request, user *domain.User, relPath string) {
+	destRelPath, ok := resolveDestinationHeader(w, r, user.Username)
+	if !ok {
 		return
 	}
 
@@ -623,66 +707,16 @@ func (h *WebDAVHandler) handleCopy(w http.ResponseWriter, r *http.Request, user 
 	}
 
 	if sourceNode.IsDir {
-		h.handleCopyDir(w, r, user, sourceNode, relPath, destRelPath, existingDest != nil)
+		h.handleCopyDir(w, r, user, relPath, destRelPath, existingDest != nil)
 		return
 	}
 
-	rc, err := h.storage.Read(user.Username, relPath)
+	size, err := h.copyFileBlob(w, r, user, relPath, destRelPath)
 	if err != nil {
-		audit.RecordFailure(r.Context(), "file_copy", relPath,
-			fmt.Sprintf("User %q failed to copy %q to %q: source not found in storage", user.Username, relPath, destRelPath),
-			slog.String("destination", destRelPath),
-		)
-		http.Error(w, "Not Found", http.StatusNotFound)
-		return
-	}
-	defer rc.Close()
-
-	size, err := h.storage.Write(user.Username, destRelPath, rc)
-	if err != nil {
-		audit.RecordFailure(r.Context(), "file_copy", relPath,
-			fmt.Sprintf("User %q failed to copy %q to %q: storage write error", user.Username, relPath, destRelPath),
-			slog.String("destination", destRelPath),
-			slog.Any("error", err),
-		)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	parentPath, name := pathutil.SplitPath(destRelPath)
-	fileID := pathutil.GenerateFileID(user.ID)
-	etag := fmt.Sprintf("%x", md5.Sum([]byte(destRelPath+fileID)))
-
-	node := &domain.Node{
-		UserID:      user.ID,
-		Path:        destRelPath,
-		ParentPath:  parentPath,
-		Name:        name,
-		IsDir:       false,
-		Size:        size,
-		ETag:        etag,
-		FileID:      fileID,
-		MTime:       time.Now(),
-		ContentType: sourceNode.ContentType,
-	}
-
-	err = h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		if err := tx.Nodes.EnsureParentDirectoryExists(r.Context(), user.ID, parentPath); err != nil {
-			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
-		}
-		if existingDest != nil {
-			node.ID = existingDest.ID
-			if err := tx.Nodes.Update(r.Context(), node); err != nil {
-				return err
-			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
-		}
-		if err := tx.Nodes.Create(r.Context(), node); err != nil {
-			return err
-		}
-		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
-	})
-	if err != nil {
+	if err := h.persistCopiedFileNode(r.Context(), user, destRelPath, sourceNode.ContentType, size, existingDest); err != nil {
 		if delErr := h.storage.Delete(user.Username, destRelPath); delErr != nil {
 			h.logger.Error("Failed to clean up storage after DB failure during COPY", slog.String("path", destRelPath), slog.Any("error", delErr))
 		}
@@ -708,7 +742,115 @@ func (h *WebDAVHandler) handleCopy(w http.ResponseWriter, r *http.Request, user 
 	}
 }
 
-func (h *WebDAVHandler) handleCopyDir(w http.ResponseWriter, r *http.Request, user *domain.User, sourceNode *domain.Node, relPath, destRelPath string, isOverwrite bool) {
+type dirCopyContext struct {
+	ctx           context.Context
+	user          *domain.User
+	h             *WebDAVHandler
+	visited       map[string]bool
+	nodesToCreate []*domain.Node
+}
+
+func (c *dirCopyContext) copyChild(currDest string, child *domain.Node, d int) error {
+	childDest := path.Join(currDest, child.Name)
+	childParent, childName := pathutil.SplitPath(childDest)
+	childFileID := pathutil.GenerateFileID(c.user.ID)
+	childETag := fmt.Sprintf("%x", md5.Sum([]byte(childDest+childFileID)))
+
+	if child.IsDir {
+		if err := c.h.storage.Mkdir(c.user.Username, childDest); err != nil {
+			return err
+		}
+		c.nodesToCreate = append(c.nodesToCreate, &domain.Node{
+			UserID:      c.user.ID,
+			Path:        childDest,
+			ParentPath:  childParent,
+			Name:        childName,
+			IsDir:       true,
+			Size:        0,
+			ETag:        childETag,
+			FileID:      childFileID,
+			MTime:       time.Now(),
+			ContentType: "httpd/unix-directory",
+		})
+		return c.walk(child.Path, childDest, d+1)
+	}
+
+	rc, err := c.h.storage.Read(c.user.Username, child.Path)
+	if err != nil {
+		return err
+	}
+	cSize, err := c.h.storage.Write(c.user.Username, childDest, rc)
+	_ = rc.Close()
+	if err != nil {
+		return err
+	}
+	c.nodesToCreate = append(c.nodesToCreate, &domain.Node{
+		UserID:      c.user.ID,
+		Path:        childDest,
+		ParentPath:  childParent,
+		Name:        childName,
+		IsDir:       false,
+		Size:        cSize,
+		ETag:        childETag,
+		FileID:      childFileID,
+		MTime:       time.Now(),
+		ContentType: child.ContentType,
+	})
+	return nil
+}
+
+func (c *dirCopyContext) walk(currSrc, currDest string, d int) error {
+	if d > 64 {
+		return errors.New("copy directory recursion depth exceeded")
+	}
+	if c.visited[currSrc] {
+		return nil
+	}
+	c.visited[currSrc] = true
+
+	children, err := c.h.nodeRepo.ListByParentPath(c.ctx, c.user.ID, currSrc)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := c.copyChild(currDest, child, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *WebDAVHandler) copyDirDescendants(ctx context.Context, user *domain.User, srcRoot, destRoot string) ([]*domain.Node, error) {
+	c := &dirCopyContext{
+		ctx:     ctx,
+		user:    user,
+		h:       h,
+		visited: make(map[string]bool),
+	}
+	if err := c.walk(srcRoot, destRoot, 1); err != nil {
+		return nil, err
+	}
+	return c.nodesToCreate, nil
+}
+
+func (h *WebDAVHandler) persistCopiedDirMetadata(ctx context.Context, user *domain.User, destRelPath, parentPath string, nodesToCreate []*domain.Node, isOverwrite bool) error {
+	return h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		if isOverwrite {
+			_ = tx.Nodes.DeletePrefix(ctx, user.ID, destRelPath)
+		}
+		if err := tx.Nodes.EnsureParentDirectoryExists(ctx, user.ID, parentPath); err != nil {
+			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
+		}
+		for _, n := range nodesToCreate {
+			if err := tx.Nodes.Create(ctx, n); err != nil {
+				return err
+			}
+		}
+		return tx.Nodes.TouchAncestors(ctx, user.ID, destRelPath)
+	})
+}
+
+func (h *WebDAVHandler) handleCopyDir(w http.ResponseWriter, r *http.Request, user *domain.User, relPath, destRelPath string, isOverwrite bool) {
 	depth := r.Header.Get("Depth")
 	if depth == "" {
 		depth = "infinity"
@@ -741,81 +883,12 @@ func (h *WebDAVHandler) handleCopyDir(w http.ResponseWriter, r *http.Request, us
 		ContentType: "httpd/unix-directory",
 	}
 
-	var nodesToCreate []*domain.Node
-	nodesToCreate = append(nodesToCreate, destDirNode)
+	nodesToCreate := []*domain.Node{destDirNode}
 
 	// Perform all filesystem I/O outside of the database transaction
 	if depth != "0" {
-		visited := make(map[string]bool)
-		var copyDescendants func(currSrc, currDest string, d int) error
-		copyDescendants = func(currSrc, currDest string, d int) error {
-			if d > 64 {
-				return fmt.Errorf("copy directory recursion depth exceeded")
-			}
-			if visited[currSrc] {
-				return nil
-			}
-			visited[currSrc] = true
-
-			children, err := h.nodeRepo.ListByParentPath(r.Context(), user.ID, currSrc)
-			if err != nil {
-				return err
-			}
-			for _, child := range children {
-				childDest := path.Join(currDest, child.Name)
-				childParent, childName := pathutil.SplitPath(childDest)
-				childFileID := pathutil.GenerateFileID(user.ID)
-				childETag := fmt.Sprintf("%x", md5.Sum([]byte(childDest+childFileID)))
-
-				if child.IsDir {
-					if err := h.storage.Mkdir(user.Username, childDest); err != nil {
-						return err
-					}
-					cNode := &domain.Node{
-						UserID:      user.ID,
-						Path:        childDest,
-						ParentPath:  childParent,
-						Name:        childName,
-						IsDir:       true,
-						Size:        0,
-						ETag:        childETag,
-						FileID:      childFileID,
-						MTime:       time.Now(),
-						ContentType: "httpd/unix-directory",
-					}
-					nodesToCreate = append(nodesToCreate, cNode)
-					if err := copyDescendants(child.Path, childDest, d+1); err != nil {
-						return err
-					}
-				} else {
-					rc, err := h.storage.Read(user.Username, child.Path)
-					if err != nil {
-						return err
-					}
-					cSize, err := h.storage.Write(user.Username, childDest, rc)
-					_ = rc.Close()
-					if err != nil {
-						return err
-					}
-					cNode := &domain.Node{
-						UserID:      user.ID,
-						Path:        childDest,
-						ParentPath:  childParent,
-						Name:        childName,
-						IsDir:       false,
-						Size:        cSize,
-						ETag:        childETag,
-						FileID:      childFileID,
-						MTime:       time.Now(),
-						ContentType: child.ContentType,
-					}
-					nodesToCreate = append(nodesToCreate, cNode)
-				}
-			}
-			return nil
-		}
-
-		if err := copyDescendants(relPath, destRelPath, 1); err != nil {
+		descendants, err := h.copyDirDescendants(r.Context(), user, relPath, destRelPath)
+		if err != nil {
 			_ = h.storage.DeleteAll(user.Username, destRelPath)
 			h.logger.Error("COPY directory storage failed", slog.String("dest", destRelPath), slog.Any("error", err))
 			audit.RecordFailure(r.Context(), "dir_copy", relPath,
@@ -824,25 +897,11 @@ func (h *WebDAVHandler) handleCopyDir(w http.ResponseWriter, r *http.Request, us
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		nodesToCreate = append(nodesToCreate, descendants...)
 	}
 
 	// Fast atomic DB metadata persistence
-	err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		if isOverwrite {
-			_ = tx.Nodes.DeletePrefix(r.Context(), user.ID, destRelPath)
-		}
-		if err := tx.Nodes.EnsureParentDirectoryExists(r.Context(), user.ID, parentPath); err != nil {
-			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
-		}
-		for _, n := range nodesToCreate {
-			if err := tx.Nodes.Create(r.Context(), n); err != nil {
-				return err
-			}
-		}
-		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destRelPath)
-	})
-
-	if err != nil {
+	if err := h.persistCopiedDirMetadata(r.Context(), user, destRelPath, parentPath, nodesToCreate, isOverwrite); err != nil {
 		_ = h.storage.DeleteAll(user.Username, destRelPath)
 		h.logger.Error("COPY directory DB transaction failed", slog.String("dest", destRelPath), slog.Any("error", err))
 		audit.RecordFailure(r.Context(), "dir_copy", relPath,

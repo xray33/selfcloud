@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,7 +28,7 @@ func NewLocalStorage(baseDir string) (Storage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid storage base dir: %w", err)
 	}
-	if err := os.MkdirAll(abs, 0755); err != nil {
+	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create base storage directory: %w", err)
 	}
 	return &localStorage{baseDir: abs}, nil
@@ -65,19 +66,25 @@ func (s *localStorage) resolvePath(username, relPath string) (string, error) {
 	return fullPath, nil
 }
 
-func checkSymlinkEscape(userDir, fullPath string) error {
+func resolveUserDirSymlinks(userDir string) (string, error) {
 	realUserDir, err := filepath.EvalSymlinks(userDir)
+	if err == nil {
+		return realUserDir, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to evaluate user directory symlinks: %w", err)
+	}
+	realBaseDir, bErr := filepath.EvalSymlinks(filepath.Dir(userDir))
+	if bErr == nil {
+		return filepath.Join(realBaseDir, filepath.Base(userDir)), nil
+	}
+	return userDir, nil
+}
+
+func checkSymlinkEscape(userDir, fullPath string) error {
+	realUserDir, err := resolveUserDirSymlinks(userDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			realBaseDir, bErr := filepath.EvalSymlinks(filepath.Dir(userDir))
-			if bErr == nil {
-				realUserDir = filepath.Join(realBaseDir, filepath.Base(userDir))
-			} else {
-				realUserDir = userDir
-			}
-		} else {
-			return fmt.Errorf("failed to evaluate user directory symlinks: %w", err)
-		}
+		return err
 	}
 	realUserDirSep := realUserDir + string(filepath.Separator)
 
@@ -90,7 +97,7 @@ func checkSymlinkEscape(userDir, fullPath string) error {
 				return fmt.Errorf("symlink resolution failed: %w", evalErr)
 			}
 			if realCurr != realUserDir && !strings.HasPrefix(realCurr, realUserDirSep) {
-				return fmt.Errorf("symlink traversal attempt detected: target resolves outside user storage root")
+				return errors.New("symlink traversal attempt detected: target resolves outside user storage root")
 			}
 			break
 		}
@@ -110,7 +117,7 @@ func (s *localStorage) Write(username, relPath string, r io.Reader) (int64, erro
 	}
 
 	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, fmt.Errorf("failed to create directory structure: %w", err)
 	}
 
@@ -174,7 +181,7 @@ func (s *localStorage) Mkdir(username, relPath string) error {
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(fullPath, 0755)
+	return os.MkdirAll(fullPath, 0o755)
 }
 
 func (s *localStorage) Move(username, oldRelPath, newRelPath string) error {
@@ -188,7 +195,7 @@ func (s *localStorage) Move(username, oldRelPath, newRelPath string) error {
 	}
 
 	dir := filepath.Dir(newPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 

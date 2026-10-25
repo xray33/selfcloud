@@ -13,6 +13,13 @@ import (
 // dialect is the shared MySQL goqu dialect builder for all repositories.
 var dialect = goqu.Dialect("mysql")
 
+const (
+	colUserID    = "user_id"
+	colPath      = "path"
+	colUpdatedAt = "updated_at"
+	colToken     = "token"
+)
+
 // Repositories holds all domain repositories configured against a common DBTX.
 type Repositories struct {
 	Users      UserRepository

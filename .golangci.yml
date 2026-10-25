@@ -5,12 +5,83 @@ run:
 
 linters:
   enable:
+    - dupl
+    - errcheck
+    - errorlint
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
     - govet
     - ineffassign
-    - staticcheck
-    - unused
     - misspell
-    - errcheck
+    - nestif
+    - perfsprint
+    - revive
+    - staticcheck
+    - unparam
+    - unused
+
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    dupl:
+      threshold: 80
+    nestif:
+      min-complexity: 4
+    funlen:
+      lines: 80
+      statements: 50
+      ignore-comments: true
+    goconst:
+      min-len: 4
+      min-occurrences: 4
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    perfsprint:
+      strconcat: false
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam
+        - unnamedResult
+        - whyNoLint
+    revive:
+      rules:
+        - name: bool-literal-in-expr
+        - name: constant-logical-expr
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: early-return
+        - name: empty-block
+        - name: empty-lines
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: identical-branches
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: superfluous-else
+        - name: time-equal
+        - name: unexported-return
+        - name: unnecessary-stmt
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: unused-receiver
+        - name: useless-break
+
   exclusions:
     presets:
       - std-error-handling
@@ -18,7 +89,17 @@ linters:
     rules:
       - path: '_test\.go'
         linters:
+          - dupl
           - errcheck
+          - funlen
+          - gocognit
+          - goconst
+          - gocritic
+          - gocyclo
+          - nestif
+          - perfsprint
+          - revive
+          - unparam
       - source: "defer .*"
         linters:
           - errcheck

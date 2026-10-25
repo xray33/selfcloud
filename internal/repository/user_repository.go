@@ -22,15 +22,15 @@ func NewUserRepository(d db.DBTX) UserRepository {
 	return &userRepo{db: d}
 }
 
-func (r *userRepo) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
+func (r *userRepo) getUserWhere(ctx context.Context, where goqu.Ex) (*domain.User, error) {
 	query, args, err := dialect.From("users").
 		Select("id", "username", "password_hash", "email", "created_at", "updated_at").
-		Where(goqu.Ex{"username": username}).
+		Where(where).
 		Limit(1).
 		ToSQL()
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to build SQL for GetByUsername: %w", err)
+		return nil, fmt.Errorf("failed to build SQL for query user: %w", err)
 	}
 
 	user := &domain.User{}
@@ -44,57 +44,21 @@ func (r *userRepo) GetByUsername(ctx context.Context, username string) (*domain.
 	}
 
 	return user, nil
+}
+
+func (r *userRepo) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
+	return r.getUserWhere(ctx, goqu.Ex{"username": username})
 }
 
 func (r *userRepo) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	if email == "" {
 		return nil, nil
 	}
-	query, args, err := dialect.From("users").
-		Select("id", "username", "password_hash", "email", "created_at", "updated_at").
-		Where(goqu.Ex{"email": email}).
-		Limit(1).
-		ToSQL()
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to build SQL for GetByEmail: %w", err)
-	}
-
-	user := &domain.User{}
-	row := r.db.QueryRowContext(ctx, query, args...)
-	err = row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Email, &user.CreatedAt, &user.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query user by email: %w", err)
-	}
-
-	return user, nil
+	return r.getUserWhere(ctx, goqu.Ex{"email": email})
 }
 
 func (r *userRepo) GetByID(ctx context.Context, id int64) (*domain.User, error) {
-	query, args, err := dialect.From("users").
-		Select("id", "username", "password_hash", "email", "created_at", "updated_at").
-		Where(goqu.Ex{"id": id}).
-		Limit(1).
-		ToSQL()
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to build SQL for GetByID: %w", err)
-	}
-
-	user := &domain.User{}
-	row := r.db.QueryRowContext(ctx, query, args...)
-	err = row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.Email, &user.CreatedAt, &user.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query user: %w", err)
-	}
-
-	return user, nil
+	return r.getUserWhere(ctx, goqu.Ex{"id": id})
 }
 
 func (r *userRepo) Create(ctx context.Context, user *domain.User) error {
@@ -126,7 +90,7 @@ func (r *userRepo) Update(ctx context.Context, user *domain.User) error {
 		Set(goqu.Record{
 			"password_hash": user.PasswordHash,
 			"email":         user.Email,
-			"updated_at":    user.UpdatedAt,
+			colUpdatedAt:    user.UpdatedAt,
 		}).
 		Where(goqu.Ex{"id": user.ID}).
 		ToSQL()

@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -153,7 +153,7 @@ func (rl *IPRateLimiter) LimitMiddleware(next http.Handler) http.Handler {
 		ip := getClientIP(r)
 		allowed, retryAfter := rl.Allow(ip)
 		if !allowed {
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"error":"Too many requests. Please try again later."}`))
