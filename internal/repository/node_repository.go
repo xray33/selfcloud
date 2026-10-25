@@ -301,7 +301,7 @@ func (r *nodeRepo) ensureParentDirectoryExistsWithDepth(ctx context.Context, use
 	return nil
 }
 
-func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+func collectUniqueAncestors(paths []string) []string {
 	seen := make(map[string]struct{})
 	var ancestors []string
 
@@ -313,7 +313,29 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 			}
 		}
 	}
+	return ancestors
+}
 
+func (r *nodeRepo) calculateAncestorSize(ctx context.Context, userID int64, ancestorPath string) (int64, error) {
+	var dirSize int64
+	if ancestorPath == "/" {
+		const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0`
+		if err := r.db.QueryRowContext(ctx, sizeQuery, userID).Scan(&dirSize); err != nil {
+			return 0, fmt.Errorf("failed to calculate size for root ancestor: %w", err)
+		}
+		return dirSize, nil
+	}
+
+	const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0 AND path LIKE ?`
+	likePattern := escapeSQLLike(ancestorPath) + "/%"
+	if err := r.db.QueryRowContext(ctx, sizeQuery, userID, likePattern).Scan(&dirSize); err != nil {
+		return 0, fmt.Errorf("failed to calculate size for ancestor %s: %w", ancestorPath, err)
+	}
+	return dirSize, nil
+}
+
+func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	ancestors := collectUniqueAncestors(paths)
 	if len(ancestors) == 0 {
 		return nil
 	}
@@ -324,18 +346,9 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 		_, _ = rand.Read(b)
 		newETag := hex.EncodeToString(b)
 
-		var dirSize int64
-		if a == "/" {
-			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0`
-			if err := r.db.QueryRowContext(ctx, sizeQuery, userID).Scan(&dirSize); err != nil {
-				return fmt.Errorf("failed to calculate size for root ancestor: %w", err)
-			}
-		} else {
-			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0 AND path LIKE ?`
-			likePattern := escapeSQLLike(a) + "/%"
-			if err := r.db.QueryRowContext(ctx, sizeQuery, userID, likePattern).Scan(&dirSize); err != nil {
-				return fmt.Errorf("failed to calculate size for ancestor %s: %w", a, err)
-			}
+		dirSize, err := r.calculateAncestorSize(ctx, userID, a)
+		if err != nil {
+			return err
 		}
 
 		query, args, err := dialect.Update("nodes").
