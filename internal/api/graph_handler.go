@@ -35,17 +35,9 @@ func (h *GraphHandler) MeDrivesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	host := r.Host
-	if host == "" {
-		host = "localhost:8080"
-	}
-
-	webDavURL := fmt.Sprintf("%s://%s/remote.php/webdav", scheme, host)
-	webURL := fmt.Sprintf("%s://%s/", scheme, host)
+	baseURL := resolveBaseURL(r)
+	webDavURL := fmt.Sprintf("%s/remote.php/webdav", baseURL)
+	webURL := fmt.Sprintf("%s/", baseURL)
 
 	var usedBytes int64
 	rootETag := `"1"`

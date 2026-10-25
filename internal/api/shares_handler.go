@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,13 +31,13 @@ type SharesHandler struct {
 	logger     *slog.Logger
 }
 
-func NewSharesHandler(transactor repository.Transactor, shareRepo repository.ShareRepository, nodeRepo repository.NodeRepository, userRepo repository.UserRepository, storage storage.Storage, logger *slog.Logger) *SharesHandler {
+func NewSharesHandler(transactor repository.Transactor, shareRepo repository.ShareRepository, nodeRepo repository.NodeRepository, userRepo repository.UserRepository, blobStore storage.Storage, logger *slog.Logger) *SharesHandler {
 	return &SharesHandler{
 		transactor: transactor,
 		shareRepo:  shareRepo,
 		nodeRepo:   nodeRepo,
 		userRepo:   userRepo,
-		storage:    storage,
+		storage:    blobStore,
 		logger:     logger,
 	}
 }
@@ -85,7 +86,7 @@ func (h *SharesHandler) CreateShareHandler(w http.ResponseWriter, r *http.Reques
 			return err
 		}
 		if node == nil {
-			return fmt.Errorf("node not found")
+			return errors.New("node not found")
 		}
 
 		// Check if already shared
@@ -199,7 +200,7 @@ func (h *SharesHandler) RevokeShareHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	audit.Record(r.Context(), "api_revoke_share", token, fmt.Sprintf("User %q revoked public share %q", user.Username, token))
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeStatusOK(w)
 }
 
 // PublicShareInfoHandler returns public unauthenticated preview info for a share token.
@@ -297,7 +298,7 @@ func (h *SharesHandler) PublicShareDownloadHandler(w http.ResponseWriter, r *htt
 	}
 	defer rc.Close()
 
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, node.ETag))
+	w.Header().Set("ETag", fmt.Sprintf("%q", node.ETag))
 	if node.ContentType != "" {
 		w.Header().Set("Content-Type", node.ContentType)
 	}
@@ -309,15 +310,7 @@ func (h *SharesHandler) PublicShareDownloadHandler(w http.ResponseWriter, r *htt
 }
 
 func formatShareResponse(r *http.Request, s *domain.Share) ShareResponse {
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	host := r.Host
-	if host == "" {
-		host = "localhost:8080"
-	}
-	shareURL := fmt.Sprintf("%s://%s/s/%s", scheme, host, s.Token)
+	shareURL := fmt.Sprintf("%s/s/%s", resolveBaseURL(r), s.Token)
 
 	return ShareResponse{
 		ID:        s.ID,

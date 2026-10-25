@@ -33,11 +33,11 @@ type FilesHandler struct {
 	maxUploadSize int64
 }
 
-func NewFilesHandler(transactor repository.Transactor, nodeRepo repository.NodeRepository, storage storage.Storage, logger *slog.Logger) *FilesHandler {
+func NewFilesHandler(transactor repository.Transactor, nodeRepo repository.NodeRepository, blobStore storage.Storage, logger *slog.Logger) *FilesHandler {
 	return &FilesHandler{
 		transactor:    transactor,
 		nodeRepo:      nodeRepo,
-		storage:       storage,
+		storage:       blobStore,
 		logger:        logger,
 		maxUploadSize: config.DefaultMaxUploadSize,
 	}
@@ -115,6 +115,109 @@ func (h *FilesHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *FilesHandler) resolveUploadDestination(ctx context.Context, userID int64, formPath, formDir, filename string) (string, error) {
+	if formPath == "" {
+		destDir := formDir
+		if destDir == "" {
+			destDir = "/"
+		}
+		fileName := path.Base(filename)
+		if fileName == "" || fileName == "." || fileName == "/" {
+			return "", errors.New("invalid file name")
+		}
+		destPath := path.Clean(path.Join(destDir, fileName))
+		if err := pathutil.ValidatePathLength(destPath); err != nil {
+			return "", err
+		}
+		return destPath, nil
+	}
+
+	cleanDest := path.Clean(formPath)
+	targetNode, _ := h.nodeRepo.GetByPath(ctx, userID, cleanDest)
+	destPath := cleanDest
+	if (targetNode != nil && targetNode.IsDir) || strings.HasSuffix(formPath, "/") || cleanDest == "." || cleanDest == "/" {
+		destPath = path.Join(cleanDest, filename)
+	}
+	destPath = path.Clean(destPath)
+	if err := pathutil.ValidatePathLength(destPath); err != nil {
+		return "", err
+	}
+	return destPath, nil
+}
+
+func (h *FilesHandler) compensateFailedUpload(username, destPath string, isNew bool, err error) {
+	if isNew {
+		if delErr := h.storage.Delete(username, destPath); delErr != nil {
+			h.logger.Error("Failed to clean up storage after DB failure during upload", slog.String("path", destPath), slog.Any("error", delErr))
+		}
+	}
+	h.logger.Error("API upload node persistence failed", slog.Any("error", err))
+}
+
+func parseUploadMTime(ocMTime string) time.Time {
+	if ocMTime != "" {
+		if sec, err := strconv.ParseInt(ocMTime, 10, 64); err == nil {
+			return time.Unix(sec, 0)
+		}
+	}
+	return time.Now()
+}
+
+func saveUploadedNode(
+	ctx context.Context,
+	tx *repository.Repositories,
+	userID int64,
+	destPath, contentType, etag string,
+	size int64,
+	mtime time.Time,
+) (*domain.Node, bool, error) {
+	parentPath, name := pathutil.SplitPath(destPath)
+	if err := tx.Nodes.EnsureParentDirectoryExists(ctx, userID, parentPath); err != nil {
+		return nil, false, fmt.Errorf("failed to ensure parent directory exists: %w", err)
+	}
+
+	existingNode, err := tx.Nodes.GetByPath(ctx, userID, destPath)
+	if err != nil {
+		return nil, false, err
+	}
+
+	var node *domain.Node
+	isNew := false
+
+	if existingNode == nil {
+		node = &domain.Node{
+			UserID:      userID,
+			Path:        destPath,
+			ParentPath:  parentPath,
+			Name:        name,
+			IsDir:       false,
+			Size:        size,
+			ETag:        etag,
+			FileID:      pathutil.GenerateFileID(userID),
+			MTime:       mtime,
+			ContentType: contentType,
+		}
+		if err := tx.Nodes.Create(ctx, node); err != nil {
+			return nil, false, err
+		}
+		isNew = true
+	} else {
+		existingNode.Size = size
+		existingNode.ETag = etag
+		existingNode.MTime = mtime
+		existingNode.ContentType = contentType
+		if err := tx.Nodes.Update(ctx, existingNode); err != nil {
+			return nil, false, err
+		}
+		node = existingNode
+	}
+
+	if err := tx.Nodes.TouchAncestors(ctx, userID, destPath); err != nil {
+		return nil, false, err
+	}
+	return node, isNew, nil
+}
+
 // UploadHandler handles file uploads from the Web UI.
 func (h *FilesHandler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -147,29 +250,8 @@ func (h *FilesHandler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	destPath := r.FormValue("path")
-	if destPath == "" {
-		destDir := r.FormValue("dir")
-		if destDir == "" {
-			destDir = "/"
-		}
-		fileName := path.Base(fileHeader.Filename)
-		if fileName == "" || fileName == "." || fileName == "/" {
-			writeJSONError(w, http.StatusBadRequest, "Invalid file name")
-			return
-		}
-		destPath = path.Join(destDir, fileName)
-	} else {
-		cleanDest := path.Clean(destPath)
-		targetNode, _ := h.nodeRepo.GetByPath(r.Context(), user.ID, cleanDest)
-		if (targetNode != nil && targetNode.IsDir) || strings.HasSuffix(destPath, "/") || cleanDest == "." || cleanDest == "/" {
-			destPath = path.Join(cleanDest, fileHeader.Filename)
-		} else {
-			destPath = cleanDest
-		}
-	}
-	destPath = path.Clean(destPath)
-	if err := pathutil.ValidatePathLength(destPath); err != nil {
+	destPath, err := h.resolveUploadDestination(r.Context(), user.ID, r.FormValue("path"), r.FormValue("dir"), fileHeader.Filename)
+	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -181,71 +263,28 @@ func (h *FilesHandler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mtime := time.Now()
-	if ocMTime := r.FormValue("mtime"); ocMTime != "" {
-		if sec, err := strconv.ParseInt(ocMTime, 10, 64); err == nil {
-			mtime = time.Unix(sec, 0)
-		}
-	}
-
+	mtime := parseUploadMTime(r.FormValue("mtime"))
 	etag := fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%s-%d-%d", destPath, size, mtime.UnixNano()))))
 	contentType := fileHeader.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	parentPath, name := pathutil.SplitPath(destPath)
 	var node *domain.Node
-	isNew := false
+	var isNew bool
 
 	err = h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		if err := tx.Nodes.EnsureParentDirectoryExists(r.Context(), user.ID, parentPath); err != nil {
-			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
-		}
-
-		existingNode, err := tx.Nodes.GetByPath(r.Context(), user.ID, destPath)
+		n, created, err := saveUploadedNode(r.Context(), tx, user.ID, destPath, contentType, etag, size, mtime)
 		if err != nil {
 			return err
 		}
-
-		if existingNode == nil {
-			fileID := pathutil.GenerateFileID(user.ID)
-			node = &domain.Node{
-				UserID:      user.ID,
-				Path:        destPath,
-				ParentPath:  parentPath,
-				Name:        name,
-				IsDir:       false,
-				Size:        size,
-				ETag:        etag,
-				FileID:      fileID,
-				MTime:       mtime,
-				ContentType: contentType,
-			}
-			if err := tx.Nodes.Create(r.Context(), node); err != nil {
-				return err
-			}
-			isNew = true
-		} else {
-			existingNode.Size = size
-			existingNode.ETag = etag
-			existingNode.MTime = mtime
-			existingNode.ContentType = contentType
-			if err := tx.Nodes.Update(r.Context(), existingNode); err != nil {
-				return err
-			}
-			node = existingNode
-		}
-		return tx.Nodes.TouchAncestors(r.Context(), user.ID, destPath)
+		node = n
+		isNew = created
+		return nil
 	})
 
 	if err != nil {
-		if isNew {
-			if delErr := h.storage.Delete(user.Username, destPath); delErr != nil {
-				h.logger.Error("Failed to clean up storage after DB failure during upload", slog.String("path", destPath), slog.Any("error", delErr))
-			}
-		}
-		h.logger.Error("API upload node persistence failed", slog.Any("error", err))
+		h.compensateFailedUpload(user.Username, destPath, isNew, err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to save node metadata")
 		return
 	}
@@ -301,28 +340,7 @@ func (h *FilesHandler) MkdirHandler(w http.ResponseWriter, r *http.Request) {
 		ContentType: "httpd/unix-directory",
 	}
 
-	err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-		existing, err := tx.Nodes.GetByPath(r.Context(), user.ID, dirPath)
-		if err != nil {
-			return err
-		}
-		if existing != nil {
-			return domain.ErrAlreadyExists
-		}
-
-		if err := tx.Nodes.EnsureParentDirectoryExists(r.Context(), user.ID, parentPath); err != nil {
-			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
-		}
-		if err := tx.Nodes.Create(r.Context(), node); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(err.Error(), "1062") {
-				return domain.ErrAlreadyExists
-			}
-			return err
-		}
-		return tx.Nodes.TouchAncestors(r.Context(), user.ID, dirPath)
-	})
-
-	if err != nil {
+	if err := h.persistDirNode(r.Context(), user, node); err != nil {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			writeJSONError(w, http.StatusBadRequest, "Directory or file already exists")
 			return
@@ -341,6 +359,29 @@ func (h *FilesHandler) MkdirHandler(w http.ResponseWriter, r *http.Request) {
 
 	audit.Record(r.Context(), "api_mkdir", dirPath, fmt.Sprintf("User %q created directory %q", user.Username, dirPath))
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"node": node})
+}
+
+func (h *FilesHandler) persistDirNode(ctx context.Context, user *domain.User, node *domain.Node) error {
+	return h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		existing, err := tx.Nodes.GetByPath(ctx, user.ID, node.Path)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			return domain.ErrAlreadyExists
+		}
+
+		if err := tx.Nodes.EnsureParentDirectoryExists(ctx, user.ID, node.ParentPath); err != nil {
+			return fmt.Errorf("failed to ensure parent directory exists: %w", err)
+		}
+		if err := tx.Nodes.Create(ctx, node); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(err.Error(), "1062") {
+				return domain.ErrAlreadyExists
+			}
+			return err
+		}
+		return tx.Nodes.TouchAncestors(ctx, user.ID, node.Path)
+	})
 }
 
 // DeleteHandler removes a file or directory.
@@ -377,35 +418,36 @@ func (h *FilesHandler) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.deleteNodeMetadata(r.Context(), user.ID, targetPath, node.IsDir); err != nil {
+		h.logger.Error("API delete DB transaction failed", slog.String("path", targetPath), slog.Bool("is_dir", node.IsDir), slog.Any("error", err))
+		writeJSONError(w, http.StatusInternalServerError, "Failed to delete metadata")
+		return
+	}
+
 	if node.IsDir {
-		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			if err := tx.Nodes.DeletePrefix(r.Context(), user.ID, targetPath); err != nil {
-				return err
-			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, targetPath)
-		}); err != nil {
-			h.logger.Error("API delete dir DB transaction failed", slog.String("path", targetPath), slog.Any("error", err))
-			writeJSONError(w, http.StatusInternalServerError, "Failed to delete directory metadata")
-			return
-		}
 		_ = h.storage.DeleteAll(user.Username, targetPath)
 		audit.Record(r.Context(), "api_delete_dir", targetPath, fmt.Sprintf("User %q deleted directory %q", user.Username, targetPath))
 	} else {
-		if err := h.transactor.WithTx(r.Context(), func(tx *repository.Repositories) error {
-			if err := tx.Nodes.Delete(r.Context(), user.ID, targetPath); err != nil {
-				return err
-			}
-			return tx.Nodes.TouchAncestors(r.Context(), user.ID, targetPath)
-		}); err != nil {
-			h.logger.Error("API delete file DB transaction failed", slog.String("path", targetPath), slog.Any("error", err))
-			writeJSONError(w, http.StatusInternalServerError, "Failed to delete file metadata")
-			return
-		}
 		_ = h.storage.Delete(user.Username, targetPath)
 		audit.Record(r.Context(), "api_delete_file", targetPath, fmt.Sprintf("User %q deleted file %q", user.Username, targetPath))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeStatusOK(w)
+}
+
+func (h *FilesHandler) deleteNodeMetadata(ctx context.Context, userID int64, targetPath string, isDir bool) error {
+	return h.transactor.WithTx(ctx, func(tx *repository.Repositories) error {
+		if isDir {
+			if err := tx.Nodes.DeletePrefix(ctx, userID, targetPath); err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Nodes.Delete(ctx, userID, targetPath); err != nil {
+				return err
+			}
+		}
+		return tx.Nodes.TouchAncestors(ctx, userID, targetPath)
+	})
 }
 
 // RenameHandler renames or moves a node.
@@ -490,7 +532,7 @@ func (h *FilesHandler) DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	w.Header().Set("ETag", fmt.Sprintf(`"%s"`, node.ETag))
+	w.Header().Set("ETag", fmt.Sprintf("%q", node.ETag))
 	if node.ContentType != "" {
 		w.Header().Set("Content-Type", node.ContentType)
 	}
@@ -514,6 +556,24 @@ func (h *FilesHandler) DownloadZipHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	targetPaths := extractZipTargetPaths(r)
+	if len(targetPaths) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "No paths specified for ZIP download")
+		return
+	}
+
+	archiveName := resolveArchiveName(targetPaths)
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", pathutil.FormatContentDisposition("attachment", archiveName))
+
+	zipWriter := zip.NewWriter(w)
+	defer zipWriter.Close()
+
+	h.streamZipNodes(r.Context(), user, targetPaths, zipWriter)
+	audit.Record(r.Context(), "api_download_zip", targetPaths[0], fmt.Sprintf("User %q downloaded ZIP archive for %v", user.Username, targetPaths))
+}
+
+func extractZipTargetPaths(r *http.Request) []string {
 	var targetPaths []string
 	if reqPath := r.URL.Query().Get("path"); reqPath != "" {
 		targetPaths = append(targetPaths, path.Clean(reqPath))
@@ -524,102 +584,108 @@ func (h *FilesHandler) DownloadZipHandler(w http.ResponseWriter, r *http.Request
 			targetPaths = append(targetPaths, path.Clean(p))
 		}
 	}
+	return targetPaths
+}
 
-	if len(targetPaths) == 0 {
-		writeJSONError(w, http.StatusBadRequest, "No paths specified for ZIP download")
-		return
-	}
-
-	archiveName := "download.zip"
+func resolveArchiveName(targetPaths []string) string {
 	if len(targetPaths) == 1 && targetPaths[0] != "/" {
-		archiveName = fmt.Sprintf("%s.zip", path.Base(targetPaths[0]))
+		return fmt.Sprintf("%s.zip", path.Base(targetPaths[0]))
 	}
+	return "download.zip"
+}
 
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", pathutil.FormatContentDisposition("attachment", archiveName))
-
-	zipWriter := zip.NewWriter(w)
-	defer zipWriter.Close()
-
+func (h *FilesHandler) streamZipNodes(ctx context.Context, user *domain.User, targetPaths []string, zw *zip.Writer) {
 	for _, targetPath := range targetPaths {
-		if err := r.Context().Err(); err != nil {
+		if ctx.Err() != nil {
 			break
 		}
-		node, err := h.nodeRepo.GetByPath(r.Context(), user.ID, targetPath)
+		node, err := h.nodeRepo.GetByPath(ctx, user.ID, targetPath)
 		if err != nil || node == nil {
 			continue
 		}
 		if node.IsDir {
-			if err := h.addFolderToZip(r.Context(), user, node.Path, zipWriter); err != nil {
-				h.logger.WarnContext(r.Context(), "ZIP directory streaming interrupted", slog.String("path", node.Path), slog.Any("error", err))
+			if err := h.addFolderToZip(ctx, user, node.Path, zw); err != nil {
+				h.logger.WarnContext(ctx, "ZIP directory streaming interrupted", slog.String("path", node.Path), slog.Any("error", err))
 				break
 			}
 		} else {
-			if err := h.addFileToZip(r.Context(), user.Username, node, node.Name, zipWriter); err != nil {
-				h.logger.WarnContext(r.Context(), "ZIP file streaming interrupted", slog.String("path", node.Path), slog.Any("error", err))
+			if err := h.addFileToZip(ctx, user.Username, node, node.Name, zw); err != nil {
+				h.logger.WarnContext(ctx, "ZIP file streaming interrupted", slog.String("path", node.Path), slog.Any("error", err))
 				break
 			}
 		}
 	}
-
-	audit.Record(r.Context(), "api_download_zip", targetPaths[0], fmt.Sprintf("User %q downloaded ZIP archive for %v", user.Username, targetPaths))
 }
 
 const maxZipRecursionDepth = 64
 
-func (h *FilesHandler) addFolderToZip(ctx context.Context, user *domain.User, folderPath string, zw *zip.Writer) error {
-	baseDir := path.Base(folderPath)
-	visited := make(map[string]bool)
+type zipDirContext struct {
+	ctx     context.Context
+	user    *domain.User
+	zw      *zip.Writer
+	h       *FilesHandler
+	visited map[string]bool
+}
 
-	var addRecursive func(currentPath, zipPrefix string, depth int) error
-	addRecursive = func(currentPath, zipPrefix string, depth int) error {
-		if depth > maxZipRecursionDepth {
-			return fmt.Errorf("maximum zip directory depth exceeded")
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if visited[currentPath] {
-			return nil
-		}
-		visited[currentPath] = true
-
-		children, err := h.nodeRepo.ListByParentPath(ctx, user.ID, currentPath)
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if child.Path == currentPath || child.Path == "/" || child.Name == "" || visited[child.Path] {
-				continue
-			}
-
-			zipEntryPath := path.Join(zipPrefix, child.Name)
-			if child.IsDir {
-				if _, err := zw.Create(zipEntryPath + "/"); err != nil {
-					return err
-				}
-				if err := addRecursive(child.Path, zipEntryPath, depth+1); err != nil {
-					return err
-				}
-			} else {
-				if err := h.addFileToZip(ctx, user.Username, child, zipEntryPath, zw); err != nil {
-					return err
-				}
-			}
-		}
+func (z *zipDirContext) addRecursive(currentPath, zipPrefix string, depth int) error {
+	if depth > maxZipRecursionDepth {
+		return errors.New("maximum zip directory depth exceeded")
+	}
+	if err := z.ctx.Err(); err != nil {
+		return err
+	}
+	if z.visited[currentPath] {
 		return nil
+	}
+	z.visited[currentPath] = true
+
+	children, err := z.h.nodeRepo.ListByParentPath(z.ctx, z.user.ID, currentPath)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := z.ctx.Err(); err != nil {
+			return err
+		}
+		if child.Path == currentPath || child.Path == "/" || child.Name == "" || z.visited[child.Path] {
+			continue
+		}
+
+		zipEntryPath := path.Join(zipPrefix, child.Name)
+		if err := z.addZipChild(child, zipEntryPath, depth); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (z *zipDirContext) addZipChild(child *domain.Node, zipEntryPath string, depth int) error {
+	if child.IsDir {
+		if _, err := z.zw.Create(zipEntryPath + "/"); err != nil {
+			return err
+		}
+		return z.addRecursive(child.Path, zipEntryPath, depth+1)
+	}
+	return z.h.addFileToZip(z.ctx, z.user.Username, child, zipEntryPath, z.zw)
+}
+
+func (h *FilesHandler) addFolderToZip(ctx context.Context, user *domain.User, folderPath string, zw *zip.Writer) error {
+	zCtx := &zipDirContext{
+		ctx:     ctx,
+		user:    user,
+		zw:      zw,
+		h:       h,
+		visited: make(map[string]bool),
 	}
 
 	if folderPath == "/" {
-		return addRecursive("/", "", 0)
+		return zCtx.addRecursive("/", "", 0)
 	}
+	baseDir := path.Base(folderPath)
 	if _, err := zw.Create(baseDir + "/"); err != nil {
 		return err
 	}
-	return addRecursive(folderPath, baseDir, 0)
+	return zCtx.addRecursive(folderPath, baseDir, 0)
 }
 
 func (h *FilesHandler) addFileToZip(ctx context.Context, username string, node *domain.Node, zipPath string, zw *zip.Writer) error {

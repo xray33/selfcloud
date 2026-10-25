@@ -26,7 +26,7 @@ func FormatContentDisposition(dispositionType, filename string) string {
 	if formatted != "" {
 		return formatted
 	}
-	return fmt.Sprintf(`%s; filename="%s"`, dispositionType, cleanFilename)
+	return fmt.Sprintf("%s; filename=%q", dispositionType, cleanFilename)
 }
 
 // MaxPathLength is the maximum allowed path length supported by the database schema.

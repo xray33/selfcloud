@@ -59,7 +59,6 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 		return stats, nil
 	}
 
-	// Track all relative paths found on disk for orphan detection.
 	diskPaths := make(map[string]struct{})
 	diskPaths["/"] = struct{}{} // root always exists
 
@@ -73,102 +72,18 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 			return nil
 		}
 
-		// Compute the relative WebDAV path.
-		rel, err := filepath.Rel(userDir, absPath)
-		if err != nil || rel == "." {
-			return nil // skip the root itself; we handle it separately
-		}
-		relPath := "/" + filepath.ToSlash(rel)
-		diskPaths[relPath] = struct{}{}
-
-		info, err := d.Info()
+		meta, err := inspectFSEntry(userDir, absPath, d)
 		if err != nil {
 			r.logger.Warn("Cannot stat entry", slog.String("path", absPath), slog.Any("error", err))
 			stats.Errors++
 			return nil
 		}
-
-		// Derive metadata from filesystem.
-		isDir := d.IsDir()
-		size := int64(0)
-		if !isDir {
-			size = info.Size()
-		}
-		mtime := info.ModTime()
-		contentType := "application/octet-stream"
-		if isDir {
-			contentType = "httpd/unix-directory"
-		}
-		etag := etagFromFS(relPath, size, mtime)
-		parentPath, name := pathutil.SplitPath(relPath)
-
-		// Check existing DB node.
-		existing, dbErr := r.nodeRepo.GetByPath(ctx, user.ID, relPath)
-		if dbErr != nil {
-			r.logger.Error("DB lookup failed",
-				slog.String("path", relPath),
-				slog.Any("error", dbErr),
-			)
-			stats.Errors++
+		if meta == nil {
 			return nil
 		}
 
-		if existing == nil {
-			// Node missing in DB → create it.
-			node := &domain.Node{
-				UserID:      user.ID,
-				Path:        relPath,
-				ParentPath:  parentPath,
-				Name:        name,
-				IsDir:       isDir,
-				Size:        size,
-				ETag:        etag,
-				FileID:      pathutil.GenerateFileID(user.ID),
-				MTime:       mtime,
-				ContentType: contentType,
-			}
-			r.logger.Info("Creating missing node",
-				slog.String("path", relPath),
-				slog.Bool("dry_run", r.dryRun),
-			)
-			if !r.dryRun {
-				if err := r.nodeRepo.Create(ctx, node); err != nil {
-					r.logger.Error("Failed to create node", slog.String("path", relPath), slog.Any("error", err))
-					stats.Errors++
-					return nil
-				}
-			}
-			stats.Created++
-		} else {
-			// Node exists — check if metadata drifted.
-			changed := existing.Size != size ||
-				existing.MTime.Unix() != mtime.Unix() ||
-				existing.IsDir != isDir ||
-				existing.Name != name ||
-				existing.ParentPath != parentPath
-
-			if changed {
-				r.logger.Info("Updating stale node",
-					slog.String("path", relPath),
-					slog.Bool("dry_run", r.dryRun),
-				)
-				if !r.dryRun {
-					existing.Name = name
-					existing.ParentPath = parentPath
-					existing.Size = size
-					existing.MTime = mtime
-					existing.ETag = etag
-					existing.ContentType = contentType
-					if err := r.nodeRepo.Update(ctx, existing); err != nil {
-						r.logger.Error("Failed to update node", slog.String("path", relPath), slog.Any("error", err))
-						stats.Errors++
-						return nil
-					}
-				}
-				stats.Updated++
-			}
-		}
-
+		diskPaths[meta.relPath] = struct{}{}
+		r.syncNode(ctx, user, meta, &stats)
 		return nil
 	})
 
@@ -176,12 +91,10 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 		return stats, fmt.Errorf("walk failed for user %s: %w", user.Username, err)
 	}
 
-	// Ensure root node exists.
 	if err := r.ensureRootNode(ctx, user); err != nil {
 		r.logger.Warn("Could not ensure root node", slog.Any("error", err))
 	}
 
-	// Orphan removal: DB nodes with no corresponding disk file.
 	if removeOrphans {
 		orphanStats, err := r.removeOrphans(ctx, user, diskPaths)
 		if err != nil {
@@ -196,6 +109,131 @@ func (r *Reindexer) ReindexUser(ctx context.Context, user *domain.User, removeOr
 	}
 
 	return stats, nil
+}
+
+type fsEntryMeta struct {
+	relPath     string
+	parentPath  string
+	name        string
+	isDir       bool
+	size        int64
+	mtime       time.Time
+	contentType string
+	etag        string
+}
+
+func inspectFSEntry(userDir, absPath string, d fs.DirEntry) (*fsEntryMeta, error) {
+	rel, err := filepath.Rel(userDir, absPath)
+	if err != nil || rel == "." {
+		return nil, nil // skip root itself
+	}
+	info, err := d.Info()
+	if err != nil {
+		return nil, err
+	}
+
+	relPath := "/" + filepath.ToSlash(rel)
+	isDir := d.IsDir()
+	size := int64(0)
+	contentType := "application/octet-stream"
+	if isDir {
+		contentType = "httpd/unix-directory"
+	} else {
+		size = info.Size()
+	}
+	mtime := info.ModTime()
+	parentPath, name := pathutil.SplitPath(relPath)
+
+	return &fsEntryMeta{
+		relPath:     relPath,
+		parentPath:  parentPath,
+		name:        name,
+		isDir:       isDir,
+		size:        size,
+		mtime:       mtime,
+		contentType: contentType,
+		etag:        etagFromFS(relPath, size, mtime),
+	}, nil
+}
+
+func (r *Reindexer) syncNode(ctx context.Context, user *domain.User, meta *fsEntryMeta, stats *Stats) {
+	existing, dbErr := r.nodeRepo.GetByPath(ctx, user.ID, meta.relPath)
+	if dbErr != nil {
+		r.logger.Error("DB lookup failed", slog.String("path", meta.relPath), slog.Any("error", dbErr))
+		stats.Errors++
+		return
+	}
+
+	if existing == nil {
+		if err := r.createMissingNode(ctx, user, meta); err != nil {
+			r.logger.Error("Failed to create node", slog.String("path", meta.relPath), slog.Any("error", err))
+			stats.Errors++
+			return
+		}
+		stats.Created++
+		return
+	}
+
+	updated, err := r.updateStaleNode(ctx, existing, meta)
+	if err != nil {
+		r.logger.Error("Failed to update node", slog.String("path", meta.relPath), slog.Any("error", err))
+		stats.Errors++
+		return
+	}
+	if updated {
+		stats.Updated++
+	}
+}
+
+func (r *Reindexer) createMissingNode(ctx context.Context, user *domain.User, meta *fsEntryMeta) error {
+	r.logger.Info("Creating missing node",
+		slog.String("path", meta.relPath),
+		slog.Bool("dry_run", r.dryRun),
+	)
+	if r.dryRun {
+		return nil
+	}
+	node := &domain.Node{
+		UserID:      user.ID,
+		Path:        meta.relPath,
+		ParentPath:  meta.parentPath,
+		Name:        meta.name,
+		IsDir:       meta.isDir,
+		Size:        meta.size,
+		ETag:        meta.etag,
+		FileID:      pathutil.GenerateFileID(user.ID),
+		MTime:       meta.mtime,
+		ContentType: meta.contentType,
+	}
+	return r.nodeRepo.Create(ctx, node)
+}
+
+func (r *Reindexer) updateStaleNode(ctx context.Context, existing *domain.Node, meta *fsEntryMeta) (bool, error) {
+	changed := existing.Size != meta.size ||
+		existing.MTime.Unix() != meta.mtime.Unix() ||
+		existing.IsDir != meta.isDir ||
+		existing.Name != meta.name ||
+		existing.ParentPath != meta.parentPath
+
+	if !changed {
+		return false, nil
+	}
+
+	r.logger.Info("Updating stale node",
+		slog.String("path", meta.relPath),
+		slog.Bool("dry_run", r.dryRun),
+	)
+	if r.dryRun {
+		return true, nil
+	}
+
+	existing.Name = meta.name
+	existing.ParentPath = meta.parentPath
+	existing.Size = meta.size
+	existing.MTime = meta.mtime
+	existing.ETag = meta.etag
+	existing.ContentType = meta.contentType
+	return true, r.nodeRepo.Update(ctx, existing)
 }
 
 func (r *Reindexer) ensureRootNode(ctx context.Context, user *domain.User) error {
@@ -221,50 +259,74 @@ func (r *Reindexer) ensureRootNode(ctx context.Context, user *domain.User) error
 	return r.nodeRepo.Create(ctx, node)
 }
 
-func (r *Reindexer) removeOrphans(ctx context.Context, user *domain.User, diskPaths map[string]struct{}) (int, error) {
-	count := 0
-	visited := make(map[string]bool)
+type orphanPruner struct {
+	ctx       context.Context
+	user      *domain.User
+	diskPaths map[string]struct{}
+	r         *Reindexer
+	visited   map[string]bool
+	count     int
+}
 
-	var walk func(parentPath string) error
-	walk = func(parentPath string) error {
-		if visited[parentPath] {
-			return nil
-		}
-		visited[parentPath] = true
-
-		children, err := r.nodeRepo.ListByParentPath(ctx, user.ID, parentPath)
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if child.Path == parentPath || child.Path == "/" || child.Name == "" || visited[child.Path] {
-				continue
-			}
-
-			if _, onDisk := diskPaths[child.Path]; !onDisk {
-				r.logger.Info("Removing orphan DB node",
-					slog.String("path", child.Path),
-					slog.Bool("dry_run", r.dryRun),
-				)
-				if !r.dryRun {
-					if err := r.nodeRepo.Delete(ctx, user.ID, child.Path); err != nil {
-						r.logger.Error("Failed to delete orphan node",
-							slog.String("path", child.Path),
-							slog.Any("error", err),
-						)
-					}
-				}
-				count++
-			} else if child.IsDir {
-				// Recurse into existing directories.
-				if err := walk(child.Path); err != nil {
-					return err
-				}
-			}
-		}
+func (p *orphanPruner) processChild(child *domain.Node) error {
+	if _, onDisk := p.diskPaths[child.Path]; !onDisk {
+		p.r.deleteOrphanNode(p.ctx, p.user.ID, child.Path)
+		p.count++
 		return nil
 	}
-	return count, walk("/")
+	if child.IsDir {
+		return p.walk(child.Path)
+	}
+	return nil
+}
+
+func (p *orphanPruner) walk(parentPath string) error {
+	if p.visited[parentPath] {
+		return nil
+	}
+	p.visited[parentPath] = true
+
+	children, err := p.r.nodeRepo.ListByParentPath(p.ctx, p.user.ID, parentPath)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if child.Path == parentPath || child.Path == "/" || child.Name == "" || p.visited[child.Path] {
+			continue
+		}
+		if err := p.processChild(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Reindexer) deleteOrphanNode(ctx context.Context, userID int64, childPath string) {
+	r.logger.Info("Removing orphan DB node",
+		slog.String("path", childPath),
+		slog.Bool("dry_run", r.dryRun),
+	)
+	if r.dryRun {
+		return
+	}
+	if err := r.nodeRepo.Delete(ctx, userID, childPath); err != nil {
+		r.logger.Error("Failed to delete orphan node",
+			slog.String("path", childPath),
+			slog.Any("error", err),
+		)
+	}
+}
+
+func (r *Reindexer) removeOrphans(ctx context.Context, user *domain.User, diskPaths map[string]struct{}) (int, error) {
+	pruner := &orphanPruner{
+		ctx:       ctx,
+		user:      user,
+		diskPaths: diskPaths,
+		r:         r,
+		visited:   make(map[string]bool),
+	}
+	err := pruner.walk("/")
+	return pruner.count, err
 }
 
 // etagFromFS computes an ETag from file path, size, and mtime — no file reads needed.

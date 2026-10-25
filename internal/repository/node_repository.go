@@ -31,7 +31,7 @@ func (r *nodeRepo) GetByPath(ctx context.Context, userID int64, path string) (*d
 	path = normalizePath(path)
 	query, args, err := dialect.From("nodes").
 		Select("id", "user_id", "path", "parent_path", "name", "is_dir", "size", "etag", "file_id", "mtime", "content_type", "created_at", "updated_at").
-		Where(goqu.Ex{"user_id": userID, "path": path}).
+		Where(goqu.Ex{colUserID: userID, colPath: path}).
 		Limit(1).
 		ToSQL()
 
@@ -59,7 +59,7 @@ func (r *nodeRepo) ListByParentPath(ctx context.Context, userID int64, parentPat
 	parentPath = normalizePath(parentPath)
 	query, args, err := dialect.From("nodes").
 		Select("id", "user_id", "path", "parent_path", "name", "is_dir", "size", "etag", "file_id", "mtime", "content_type", "created_at", "updated_at").
-		Where(goqu.Ex{"user_id": userID, "parent_path": parentPath}).
+		Where(goqu.Ex{colUserID: userID, "parent_path": parentPath}).
 		Order(goqu.I("is_dir").Desc(), goqu.I("name").Asc()).
 		ToSQL()
 
@@ -144,9 +144,9 @@ func (r *nodeRepo) Update(ctx context.Context, node *domain.Node) error {
 			"mtime":        node.MTime,
 			"content_type": node.ContentType,
 			"is_dir":       isDirInt,
-			"updated_at":   time.Now(),
+			colUpdatedAt:   time.Now(),
 		}).
-		Where(goqu.Ex{"user_id": node.UserID, "path": node.Path}).
+		Where(goqu.Ex{colUserID: node.UserID, colPath: node.Path}).
 		ToSQL()
 
 	if err != nil {
@@ -164,7 +164,7 @@ func (r *nodeRepo) Update(ctx context.Context, node *domain.Node) error {
 func (r *nodeRepo) Delete(ctx context.Context, userID int64, path string) error {
 	path = normalizePath(path)
 	query, args, err := dialect.Delete("nodes").
-		Where(goqu.Ex{"user_id": userID, "path": path}).
+		Where(goqu.Ex{colUserID: userID, colPath: path}).
 		ToSQL()
 
 	if err != nil {
@@ -186,8 +186,8 @@ func (r *nodeRepo) DeletePrefix(ctx context.Context, userID int64, pathPrefix st
 	escapedPrefix := escapeSQLLike(pathPrefix)
 
 	query, args, err := dialect.Delete("nodes").
-		Where(goqu.Ex{"user_id": userID}, goqu.Or(
-			goqu.Ex{"path": strings.TrimSuffix(pathPrefix, "/")},
+		Where(goqu.Ex{colUserID: userID}, goqu.Or(
+			goqu.Ex{colPath: strings.TrimSuffix(pathPrefix, "/")},
 			goqu.L("path LIKE ?", escapedPrefix+"%"),
 		)).
 		ToSQL()
@@ -215,12 +215,12 @@ func (r *nodeRepo) MovePrefix(ctx context.Context, userID int64, oldPrefix, newP
 	// 1. Update the moved root node itself
 	updateRootQuery, rootArgs, err := dialect.Update("nodes").
 		Set(goqu.Record{
-			"path":        newPrefix,
+			colPath:       newPrefix,
 			"parent_path": targetParent,
 			"name":        targetName,
-			"updated_at":  now,
+			colUpdatedAt:  now,
 		}).
-		Where(goqu.Ex{"user_id": userID, "path": oldPrefix}).
+		Where(goqu.Ex{colUserID: userID, colPath: oldPrefix}).
 		ToSQL()
 	if err != nil {
 		return fmt.Errorf("failed to build SQL for MovePrefix root update: %w", err)
@@ -301,7 +301,7 @@ func (r *nodeRepo) ensureParentDirectoryExistsWithDepth(ctx context.Context, use
 	return nil
 }
 
-func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+func collectUniqueAncestors(paths []string) []string {
 	seen := make(map[string]struct{})
 	var ancestors []string
 
@@ -313,7 +313,29 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 			}
 		}
 	}
+	return ancestors
+}
 
+func (r *nodeRepo) calculateAncestorSize(ctx context.Context, userID int64, ancestorPath string) (int64, error) {
+	var dirSize int64
+	if ancestorPath == "/" {
+		const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0`
+		if err := r.db.QueryRowContext(ctx, sizeQuery, userID).Scan(&dirSize); err != nil {
+			return 0, fmt.Errorf("failed to calculate size for root ancestor: %w", err)
+		}
+		return dirSize, nil
+	}
+
+	const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0 AND path LIKE ?`
+	likePattern := escapeSQLLike(ancestorPath) + "/%"
+	if err := r.db.QueryRowContext(ctx, sizeQuery, userID, likePattern).Scan(&dirSize); err != nil {
+		return 0, fmt.Errorf("failed to calculate size for ancestor %s: %w", ancestorPath, err)
+	}
+	return dirSize, nil
+}
+
+func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...string) error {
+	ancestors := collectUniqueAncestors(paths)
 	if len(ancestors) == 0 {
 		return nil
 	}
@@ -324,18 +346,9 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 		_, _ = rand.Read(b)
 		newETag := hex.EncodeToString(b)
 
-		var dirSize int64
-		if a == "/" {
-			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0`
-			if err := r.db.QueryRowContext(ctx, sizeQuery, userID).Scan(&dirSize); err != nil {
-				return fmt.Errorf("failed to calculate size for root ancestor: %w", err)
-			}
-		} else {
-			const sizeQuery = `SELECT COALESCE(SUM(size), 0) FROM nodes WHERE user_id = ? AND is_dir = 0 AND path LIKE ?`
-			likePattern := escapeSQLLike(a) + "/%"
-			if err := r.db.QueryRowContext(ctx, sizeQuery, userID, likePattern).Scan(&dirSize); err != nil {
-				return fmt.Errorf("failed to calculate size for ancestor %s: %w", a, err)
-			}
+		dirSize, err := r.calculateAncestorSize(ctx, userID, a)
+		if err != nil {
+			return err
 		}
 
 		query, args, err := dialect.Update("nodes").
@@ -343,11 +356,11 @@ func (r *nodeRepo) TouchAncestors(ctx context.Context, userID int64, paths ...st
 				"etag":       newETag,
 				"size":       dirSize,
 				"mtime":      now,
-				"updated_at": now,
+				colUpdatedAt: now,
 			}).
 			Where(goqu.Ex{
-				"user_id": userID,
-				"path":    a,
+				colUserID: userID,
+				colPath:   a,
 				"is_dir":  1,
 			}).
 			ToSQL()

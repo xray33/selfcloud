@@ -70,7 +70,7 @@ func (r *identityRepo) GetByProviderUID(ctx context.Context, provider, providerU
 func (r *identityRepo) ListByUserID(ctx context.Context, userID int64) ([]*domain.UserIdentity, error) {
 	query, args, err := dialect.From("user_identities").
 		Select("id", "user_id", "provider", "provider_user_id", "email", "created_at").
-		Where(goqu.Ex{"user_id": userID}).
+		Where(goqu.Ex{colUserID: userID}).
 		ToSQL()
 
 	if err != nil {

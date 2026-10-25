@@ -42,7 +42,7 @@ func (r *sessionRepo) Create(ctx context.Context, session *domain.Session) error
 func (r *sessionRepo) GetByToken(ctx context.Context, token string) (*domain.Session, error) {
 	query, args, err := dialect.From("sessions").
 		Select("token", "user_id", "expires_at", "created_at").
-		Where(goqu.Ex{"token": token}).
+		Where(goqu.Ex{colToken: token}).
 		Limit(1).
 		ToSQL()
 
@@ -63,13 +63,13 @@ func (r *sessionRepo) GetByToken(ctx context.Context, token string) (*domain.Ses
 	return s, nil
 }
 
-func (r *sessionRepo) DeleteByToken(ctx context.Context, token string) error {
+func (r *sessionRepo) deleteSessionsWhere(ctx context.Context, where goqu.Ex) error {
 	query, args, err := dialect.Delete("sessions").
-		Where(goqu.Ex{"token": token}).
+		Where(where).
 		ToSQL()
 
 	if err != nil {
-		return fmt.Errorf("failed to build SQL for DeleteByToken: %w", err)
+		return fmt.Errorf("failed to build SQL for delete session: %w", err)
 	}
 
 	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
@@ -79,20 +79,12 @@ func (r *sessionRepo) DeleteByToken(ctx context.Context, token string) error {
 	return nil
 }
 
+func (r *sessionRepo) DeleteByToken(ctx context.Context, token string) error {
+	return r.deleteSessionsWhere(ctx, goqu.Ex{colToken: token})
+}
+
 func (r *sessionRepo) DeleteByUserID(ctx context.Context, userID int64) error {
-	query, args, err := dialect.Delete("sessions").
-		Where(goqu.Ex{"user_id": userID}).
-		ToSQL()
-
-	if err != nil {
-		return fmt.Errorf("failed to build SQL for DeleteByUserID: %w", err)
-	}
-
-	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("failed to delete sessions: %w", err)
-	}
-
-	return nil
+	return r.deleteSessionsWhere(ctx, goqu.Ex{colUserID: userID})
 }
 
 func (r *sessionRepo) DeleteExpired(ctx context.Context) (int64, error) {

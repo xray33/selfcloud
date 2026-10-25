@@ -9,30 +9,40 @@ import (
 	"sync"
 
 	"selfcloud/internal/audit"
+	"selfcloud/internal/domain"
 	"selfcloud/internal/repository"
 )
 
 const SessionCookieName = "selfcloud_session"
 
+func resolveSessionUser(ctx context.Context, sessionRepo repository.SessionRepository, userRepo repository.UserRepository, token string) *domain.User {
+	if token == "" || sessionRepo == nil || userRepo == nil {
+		return nil
+	}
+	session, err := sessionRepo.GetByToken(ctx, token)
+	if err != nil || session == nil {
+		return nil
+	}
+	if session.IsExpired() {
+		_ = sessionRepo.DeleteByToken(ctx, token)
+		return nil
+	}
+	user, err := userRepo.GetByID(ctx, session.UserID)
+	if err != nil || user == nil {
+		return nil
+	}
+	return user
+}
+
 func SessionAuthMiddleware(sessionRepo repository.SessionRepository, userRepo repository.UserRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := ExtractSessionToken(r)
-			if token != "" {
-				session, err := sessionRepo.GetByToken(r.Context(), token)
-				if err == nil && session != nil {
-					if session.IsExpired() {
-						_ = sessionRepo.DeleteByToken(r.Context(), token)
-					} else {
-						user, err := userRepo.GetByID(r.Context(), session.UserID)
-						if err == nil && user != nil {
-							ctx := context.WithValue(r.Context(), UserKey, user.Username)
-							ctx = context.WithValue(ctx, UserObjKey, user)
-							audit.SetUsername(ctx, user.Username)
-							r = r.WithContext(ctx)
-						}
-					}
-				}
+			if user := resolveSessionUser(r.Context(), sessionRepo, userRepo, token); user != nil {
+				ctx := context.WithValue(r.Context(), UserKey, user.Username)
+				ctx = context.WithValue(ctx, UserObjKey, user)
+				audit.SetUsername(ctx, user.Username)
+				r = r.WithContext(ctx)
 			}
 
 			next.ServeHTTP(w, r)

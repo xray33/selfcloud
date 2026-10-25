@@ -46,7 +46,7 @@ func (r *shareRepo) Create(ctx context.Context, share *domain.Share) error {
 func (r *shareRepo) GetByToken(ctx context.Context, token string) (*domain.Share, error) {
 	query, args, err := dialect.From("shares").
 		Select("id", "token", "user_id", "path", "is_dir", "expires_at", "created_at").
-		Where(goqu.Ex{"token": token}).
+		Where(goqu.Ex{colToken: token}).
 		Limit(1).
 		ToSQL()
 
@@ -70,7 +70,7 @@ func (r *shareRepo) GetByToken(ctx context.Context, token string) (*domain.Share
 func (r *shareRepo) GetByPath(ctx context.Context, userID int64, path string) (*domain.Share, error) {
 	query, args, err := dialect.From("shares").
 		Select("id", "token", "user_id", "path", "is_dir", "expires_at", "created_at").
-		Where(goqu.Ex{"user_id": userID, "path": path}).
+		Where(goqu.Ex{colUserID: userID, colPath: path}).
 		Limit(1).
 		ToSQL()
 
@@ -94,7 +94,7 @@ func (r *shareRepo) GetByPath(ctx context.Context, userID int64, path string) (*
 func (r *shareRepo) ListByUserID(ctx context.Context, userID int64) ([]*domain.Share, error) {
 	query, args, err := dialect.From("shares").
 		Select("id", "token", "user_id", "path", "is_dir", "expires_at", "created_at").
-		Where(goqu.Ex{"user_id": userID}).
+		Where(goqu.Ex{colUserID: userID}).
 		Order(goqu.I("created_at").Desc()).
 		ToSQL()
 
@@ -125,7 +125,7 @@ func (r *shareRepo) ListByUserID(ctx context.Context, userID int64) ([]*domain.S
 
 func (r *shareRepo) DeleteByToken(ctx context.Context, token string, userID int64) error {
 	query, args, err := dialect.Delete("shares").
-		Where(goqu.Ex{"token": token, "user_id": userID}).
+		Where(goqu.Ex{colToken: token, colUserID: userID}).
 		ToSQL()
 
 	if err != nil {
