@@ -115,7 +115,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Backend Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -123,7 +123,7 @@ jobs:
           tags: selfcloud-backend:test
 
       - name: Build Web Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.web
