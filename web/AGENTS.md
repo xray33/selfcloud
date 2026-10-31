@@ -5,8 +5,8 @@
 It provides a modern, fast file management Web UI (file browsing, breadcrumb navigation, drag-and-drop file upload, folder creation, inline rename/delete, public tokenized sharing, and dynamic ZIP archive streaming).
 
 ## 2. Tech Stack & Dependencies
-- **Framework**: React 19 + TypeScript 5
-- **Build Tool**: Vite 6
+- **Framework**: React 19 + TypeScript 7
+- **Build Tool**: Vite 8
 - **Styling**: Tailwind CSS v3
 - **Icons**: Lucide React
 - **HTTP Client**: Native `fetch` wrapper in `src/api/client.ts` with credentials (`credentials: 'include'` for HttpOnly session cookies)
