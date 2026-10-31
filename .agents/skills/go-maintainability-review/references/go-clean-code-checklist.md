@@ -48,7 +48,7 @@ Target functions where `gocyclo > 15`, `gocognit > 20`, `nestif >= 4`, or `funle
 
 ---
 
-## 3. Go 1.26 & Clean Code Practices
+## 3. Go 1.27 & Clean Code Practices
 
 1. **Error Handling**:
    - Always use `errors.New("...")` instead of `fmt.Errorf("...")` when there are no format verbs (`perfsprint: error-format`).

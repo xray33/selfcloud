@@ -3,11 +3,14 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
+
+const migrationLockName = "selfcloud_schema_migrations"
 
 // DBTX is the common interface satisfied by both *sql.DB and *sql.Tx.
 type DBTX interface {
@@ -68,6 +71,12 @@ type migration struct {
 }
 
 func Migrate(db *sql.DB) error {
+	return withMigrationLock(db, func() error {
+		return runMigrations(db)
+	})
+}
+
+func runMigrations(db *sql.DB) error {
 	if err := ensureMigrationsTable(db); err != nil {
 		return err
 	}
@@ -77,6 +86,28 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func withMigrationLock(db *sql.DB, fn func() error) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for migration lock: %w", err)
+	}
+	defer conn.Close()
+
+	var locked sql.NullInt64
+	if err := conn.QueryRowContext(ctx, `SELECT GET_LOCK(?, 60)`, migrationLockName).Scan(&locked); err != nil {
+		return fmt.Errorf("failed to acquire migration lock: %w", err)
+	}
+	if !locked.Valid || locked.Int64 != 1 {
+		return errors.New("timed out waiting for database migration lock")
+	}
+	defer func() {
+		_, _ = conn.ExecContext(ctx, `SELECT RELEASE_LOCK(?)`, migrationLockName)
+	}()
+
+	return fn()
 }
 
 func ensureMigrationsTable(db *sql.DB) error {
@@ -135,7 +166,7 @@ func applyMigration(db *sql.DB, m migration) error {
 		return fmt.Errorf("failed applying migration %d (%s): %w", m.version, m.description, err)
 	}
 
-	if _, err := db.Exec(`INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)`,
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE description = VALUES(description)`,
 		m.version, m.description, time.Now()); err != nil {
 		return fmt.Errorf("failed to record migration %d: %w", m.version, err)
 	}

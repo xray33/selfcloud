@@ -38,7 +38,7 @@ Every non-test Go function must stay within these hard limits:
 
 ---
 
-## 3. Go 1.26 Idioms & Clean Code Rules
+## 3. Go 1.27 Idioms & Clean Code Rules
 
 1. **Error Construction & Inspection (`errorlint`, `revive`, `gocritic`)**:
    - Use `errors.New("static message")` when no formatting verbs are needed (never `fmt.Errorf("static message")`).
@@ -48,7 +48,7 @@ Every non-test Go function must stay within these hard limits:
 2. **String Formatting (`perfsprint`, `gocritic`)**:
    - Use `%q` in `fmt.Sprintf` instead of manual escaped quotes `\"%s\"`.
 3. **Octal File Permissions (`gocritic`)**:
-   - Always use Go 1.26 octal literal syntax `0o755`, `0o644`, `0o600` (never legacy `0755`).
+   - Always use Go 1.27 octal literal syntax `0o755`, `0o644`, `0o600` (never legacy `0755`).
 4. **Unused Parameters, Receivers & Shadowing (`unparam`, `revive`, ` gocritic`)**:
    - Remove unused parameters from internal functions. If a signature is fixed by an interface or `http.HandlerFunc`, rename the unused parameter to `_`.
    - If a method does not access struct fields, omit the receiver variable name (`func (*Handler) helper(...)`).

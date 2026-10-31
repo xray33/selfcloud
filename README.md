@@ -1,6 +1,6 @@
 # SelfCloud
 
-[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![React Version](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react)](https://react.dev/)
 [![CI](https://github.com/xray33/selfcloud/actions/workflows/ci.yml/badge.svg)](https://github.com/xray33/selfcloud/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/xray33/selfcloud/branch/main/graph/badge.svg)](https://codecov.io/gh/xray33/selfcloud)
@@ -34,7 +34,7 @@ It enables official **ownCloud Desktop Sync Clients**, **Mobile Apps**, and **We
 
 ## 🏗 Architecture & Tech Stack
 
-- **Backend**: Go 1.26 (Native `net/http` routing)
+- **Backend**: Go 1.27 (Native `net/http` routing)
 - **Frontend**: React 19, TypeScript 5, Vite 6, Tailwind CSS v3, Lucide React (`web/`)
 - **Metadata Database**: MariaDB / MySQL (Vendor-agnostic SQL generation via `doug-martin/goqu/v9`)
 - **File Storage**: Local filesystem (`./data` or configured path)

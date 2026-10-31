@@ -1,7 +1,7 @@
 # AGENTS.md - Guide for AI Agents working on SelfCloud
 
 ## 1. Project Overview
-SelfCloud is a lightweight, 100% ownCloud-compatible WebDAV backend service and Web UI written in Go (Go 1.26) and React 19.
+SelfCloud is a lightweight, 100% ownCloud-compatible WebDAV backend service and Web UI written in Go (Go 1.27) and React 19.
 It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to log in, browse files, upload, download, move, copy, share, and delete files seamlessly.
 
 > [!NOTE]
@@ -9,7 +9,7 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 > For AI Agent instructions specific to production Ansible deployment, see [`deploy/AGENTS.md`](deploy/AGENTS.md).
 
 ## 2. Tech Stack & Dependencies
-- **Backend Language**: Go 1.26 (using standard library `net/http` native routing).
+- **Backend Language**: Go 1.27 (using standard library `net/http` native routing).
 - **Frontend Subproject**: React 19 + TypeScript + Vite + Tailwind CSS in [`web/`](web/AGENTS.md).
 - **Metadata Database**: MariaDB / MySQL compatible (DB-agnostic design using `doug-martin/goqu/v9` SQL builder; versioned schema migrations via `schema_migrations` table).
 - **File Storage**: Local filesystem (`./data` or configured path).
@@ -87,6 +87,6 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 6. **Go Maintainability & Clean Code Standards** (enforced automatically by `make lint` via `.golangci.yml`):
    - **Complexity & Size Caps**: Cognitive complexity `gocognit` $\le 20$, cyclomatic complexity `gocyclo` $\le 15$, function length `funlen` $\le 80$ lines / $\le 50$ statements, nesting depth `nestif` $\le 4$. Flatten control flow with early-return guard clauses (`if err != nil { return err }`) and decompose handlers into small, single-responsibility helpers.
    - **Zero Duplication & Magic Literals**: `dupl` threshold is 80 tokens; reuse shared repository helpers (`get*Where`, `delete*Where`), column constants (`colUserID`, `colPath`, `colUpdatedAt`, `colToken`), and HTTP helpers (`writeJSON`, `writeJSONError`, `writeStatusOK`, `resolveBaseURL`). Keep HTML/CSS and SQL templates in package-level `const` declarations or dedicated helpers.
-   - **Go 1.26 Idioms**: Use `0o755` octal literals, `errors.New` for static errors, `%w` + `errors.Is`/`errors.As` for error wrapping, `%q` in `fmt.Sprintf` instead of `\"%s\"`, omit unused receiver names (`func (*Handler) helper(...)`), and never call `os.Exit` inside functions with active `defer` statements.
+   - **Go 1.27 Idioms**: Use `0o755` octal literals, `errors.New` for static errors, `%w` + `errors.Is`/`errors.As` for error wrapping, `%q` in `fmt.Sprintf` instead of `\"%s\"`, omit unused receiver names (`func (*Handler) helper(...)`), and never call `os.Exit` inside functions with active `defer` statements.
 
 @[Go Engineering Standards](.agents/rules/go-engineering-standards.md)
