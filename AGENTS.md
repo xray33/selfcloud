@@ -60,7 +60,7 @@ It allows ownCloud desktop sync clients, mobile apps, and modern web browsers to
 
 ## 5. Development & Testing Commands
 - **CI & Pre-Commit Check**: Run `make ci` (runs Go lint, Go tests, UI lint, UI build, and backend build).
-- **Linting**: Run `make lint` (strict Go linter including complexity, duplication, and clean-code checks), `make lint-maintainability` (categorized maintainability report), and `make ui-lint` / `make ui-build` (React typecheck & build).
+- **Linting**: Run `make lint` (strict Go linter including complexity, duplication, and clean-code checks), `make lint-maintainability` (categorized maintainability report), `make vulncheck` (Go vulnerability scanner via `govulncheck`), and `make ui-lint` / `make ui-build` (React typecheck & build).
 - **Tests**: Run `make test` (runs unit & functional tests against MariaDB configured via `DB_DSN`).
 - **Build**: Run `make build` (compiles `bin/selfcloud`) and `make ui-build` (builds `web/dist`).
 - **Docker Targets**:
