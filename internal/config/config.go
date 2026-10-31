@@ -2,35 +2,36 @@ package config
 
 import (
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	ServerPort            string
-	StorageDir            string
-	DBDriver              string
-	DBDSN                 string
-	DBMaxOpenConns        int
-	DBMaxIdleConns        int
-	DBConnMaxLifetime     time.Duration
-	DBConnMaxIdleTime     time.Duration
-	LogLevel              string
-	ServeStatic           bool
-	AutoMigrate           bool
-	SSOGoogleClientID     string
-	SSOGoogleClientSecret string
-	SSORedirectBaseURL    string
-	MaxUploadSize         int64
-	TrustProxy            bool
-	CookieSecure          string
-	ServerReadTimeout     time.Duration
+	ServerPort             string
+	StorageDir             string
+	DBDriver               string
+	DBDSN                  string
+	DBMaxOpenConns         int
+	DBMaxIdleConns         int
+	DBConnMaxLifetime      time.Duration
+	DBConnMaxIdleTime      time.Duration
+	LogLevel               string
+	ServeStatic            bool
+	AutoMigrate            bool
+	SSOGoogleClientID      string
+	SSOGoogleClientSecret  string
+	SSORedirectBaseURL     string
+	MaxUploadSize          int64
+	TrustProxy             bool
+	CookieSecure           string
+	ServerReadTimeout      time.Duration
 	RateLimitLoginRequests int
-	RateLimitLoginWindow  time.Duration
-	MetricsAuthToken      string
-	AuthMethods           []string
-	EnableSpaces          bool
+	RateLimitLoginWindow   time.Duration
+	MetricsAuthToken       string
+	AuthMethods            []string
+	EnableSpaces           bool
 }
 
 // DefaultMaxUploadSize is the default maximum upload limit across WebDAV and REST API (10 GB).
@@ -38,29 +39,29 @@ const DefaultMaxUploadSize int64 = 10 << 30
 
 func LoadConfig() *Config {
 	return &Config{
-		ServerPort:            getEnv("SERVER_PORT", "8080"),
-		StorageDir:            getEnv("STORAGE_DIR", "./data"),
-		DBDriver:              getEnv("DB_DRIVER", "mysql"),
-		DBDSN:                 getEnv("DB_DSN", "selfcloud:selfcloud_pass@tcp(127.0.0.1:3306)/selfcloud?parseTime=true"),
-		DBMaxOpenConns:        getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
-		DBMaxIdleConns:        getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
-		DBConnMaxLifetime:     getEnvAsDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
-		DBConnMaxIdleTime:     getEnvAsDuration("DB_CONN_MAX_IDLE_TIME", 1*time.Minute),
-		LogLevel:              getEnv("LOG_LEVEL", "info"),
-		ServeStatic:           getEnvAsBool("SERVE_STATIC", true),
-		AutoMigrate:           getEnvAsBool("AUTO_MIGRATE", true),
-		SSOGoogleClientID:     getEnv("SSO_GOOGLE_CLIENT_ID", ""),
-		SSOGoogleClientSecret: getEnv("SSO_GOOGLE_CLIENT_SECRET", ""),
-		SSORedirectBaseURL:    getEnv("SSO_REDIRECT_BASE_URL", "http://localhost:8080"),
-		MaxUploadSize:         getEnvAsInt64("MAX_UPLOAD_SIZE_BYTES", DefaultMaxUploadSize),
-		TrustProxy:            getEnvAsBool("TRUST_PROXY", true),
-		CookieSecure:          getEnv("COOKIE_SECURE", "auto"),
-		ServerReadTimeout:     getEnvAsDuration("SERVER_READ_TIMEOUT", 30*time.Minute),
+		ServerPort:             getEnv("SERVER_PORT", "8080"),
+		StorageDir:             getEnv("STORAGE_DIR", "./data"),
+		DBDriver:               getEnv("DB_DRIVER", "mysql"),
+		DBDSN:                  getEnv("DB_DSN", "selfcloud:selfcloud_pass@tcp(127.0.0.1:3306)/selfcloud?parseTime=true"),
+		DBMaxOpenConns:         getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
+		DBMaxIdleConns:         getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
+		DBConnMaxLifetime:      getEnvAsDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
+		DBConnMaxIdleTime:      getEnvAsDuration("DB_CONN_MAX_IDLE_TIME", 1*time.Minute),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
+		ServeStatic:            getEnvAsBool("SERVE_STATIC", true),
+		AutoMigrate:            getEnvAsBool("AUTO_MIGRATE", true),
+		SSOGoogleClientID:      getEnv("SSO_GOOGLE_CLIENT_ID", ""),
+		SSOGoogleClientSecret:  getEnv("SSO_GOOGLE_CLIENT_SECRET", ""),
+		SSORedirectBaseURL:     getEnv("SSO_REDIRECT_BASE_URL", "http://localhost:8080"),
+		MaxUploadSize:          getEnvAsInt64("MAX_UPLOAD_SIZE_BYTES", DefaultMaxUploadSize),
+		TrustProxy:             getEnvAsBool("TRUST_PROXY", true),
+		CookieSecure:           getEnv("COOKIE_SECURE", "auto"),
+		ServerReadTimeout:      getEnvAsDuration("SERVER_READ_TIMEOUT", 30*time.Minute),
 		RateLimitLoginRequests: getEnvAsInt("RATE_LIMIT_LOGIN_REQUESTS", 15),
-		RateLimitLoginWindow:  getEnvAsDuration("RATE_LIMIT_LOGIN_WINDOW", 1*time.Minute),
-		MetricsAuthToken:      getEnv("METRICS_AUTH_TOKEN", ""),
-		AuthMethods:           parseAuthMethods(getEnv("AUTH_METHODS", "basic,oauth")),
-		EnableSpaces:          getEnvAsBool("ENABLE_SPACES", false),
+		RateLimitLoginWindow:   getEnvAsDuration("RATE_LIMIT_LOGIN_WINDOW", 1*time.Minute),
+		MetricsAuthToken:       getEnv("METRICS_AUTH_TOKEN", ""),
+		AuthMethods:            parseAuthMethods(getEnv("AUTH_METHODS", "basic,oauth")),
+		EnableSpaces:           getEnvAsBool("ENABLE_SPACES", false),
 	}
 }
 
@@ -101,7 +102,6 @@ func getEnvAsInt64(key string, defaultValue int64) int64 {
 	return defaultValue
 }
 
-
 func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	val := os.Getenv(key)
 	if val == "" {
@@ -132,21 +132,13 @@ func parseAuthMethods(val string) []string {
 }
 
 func (c *Config) IsBasicAuthEnabled() bool {
-	for _, m := range c.AuthMethods {
-		if m == "basic" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AuthMethods, "basic")
 }
 
 func (c *Config) IsOAuthEnabled() bool {
-	for _, m := range c.AuthMethods {
-		if m == "oauth" || m == "oauth2" || m == "bearer" {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(c.AuthMethods, func(m string) bool {
+		return m == "oauth" || m == "oauth2" || m == "bearer"
+	})
 }
 
 func (c *Config) WWWAuthenticateHeader() string {
@@ -162,5 +154,3 @@ func (c *Config) WWWAuthenticateHeader() string {
 	}
 	return strings.Join(parts, ", ")
 }
-
-

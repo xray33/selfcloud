@@ -43,7 +43,7 @@ Every non-test Go function must stay within these hard limits:
 1. **Error Construction & Inspection (`errorlint`, `revive`, `gocritic`)**:
    - Use `errors.New("static message")` when no formatting verbs are needed (never `fmt.Errorf("static message")`).
    - Always wrap errors with `%w` (`fmt.Errorf("context: %w", err)`).
-   - Always inspect errors with `errors.Is(err, target)` or `errors.As(err, &target)` (never `err == sql.ErrNoRows` or direct type assertions).
+   - Always inspect errors with `errors.Is(err, target)` or `errors.AsType[T](err)` / `errors.As(err, &target)` (never `err == sql.ErrNoRows` or direct type assertions).
    - Keep error strings lowercase without trailing punctuation.
 2. **String Formatting (`perfsprint`, `gocritic`)**:
    - Use `%q` in `fmt.Sprintf` instead of manual escaped quotes `\"%s\"`.

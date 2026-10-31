@@ -85,7 +85,7 @@ func TestIPRateLimiter(t *testing.T) {
 
 		handler := limiter.LimitMiddleware(dummyHandler)
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			req := httptest.NewRequest(http.MethodPost, "/login", nil)
 			req.RemoteAddr = "192.0.2.10:1234"
 			rec := httptest.NewRecorder()

@@ -215,13 +215,12 @@ func TestRepositoryOperations(t *testing.T) {
 	}
 
 	// 3. Share Repository with ExpiresAt & ListByUserID
-	expiresAt := time.Now().Add(24 * time.Hour)
 	share := &domain.Share{
 		Token:     "share_token_repo_test",
 		UserID:    fetchedUser.ID,
 		Path:      "/folderB/child.txt",
 		IsDir:     false,
-		ExpiresAt: &expiresAt,
+		ExpiresAt: new(time.Now().Add(24 * time.Hour)),
 		CreatedAt: time.Now(),
 	}
 	if err := repos.Shares.Create(ctx, share); err != nil {

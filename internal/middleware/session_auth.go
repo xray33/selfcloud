@@ -171,8 +171,8 @@ func ExtractSessionToken(r *http.Request) string {
 		return cookie.Value
 	}
 	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if after, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
+		return strings.TrimSpace(after)
 	}
 	return ""
 }
@@ -220,4 +220,3 @@ func IsSecureRequest(r *http.Request) bool {
 		return false
 	}
 }
-

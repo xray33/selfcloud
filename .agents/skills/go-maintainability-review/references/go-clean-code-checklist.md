@@ -64,7 +64,7 @@ Target functions where `gocyclo > 15`, `gocognit > 20`, `nestif >= 4`, or `funle
    - Prefer `%q` in `fmt.Sprintf` over `"\"%s\""` (`gocritic: sprintfQuotedString`).
    - Prefer `0o755` / `0o644` octal literals over legacy `0755` (`gocritic: octalLiteral`).
    - Prefer `http.NoBody` over `nil` in `http.NewRequestWithContext` when sending no body (`gocritic: httpNoBody`).
-   - Prefer `strings.Cut`, `strings.CutPrefix`, `strings.CutSuffix`, `slices.Contains`, `min()`, and `max()` over manual index slicing or verbose loops.
+   - Prefer `strings.Cut`, `strings.CutPrefix`, `strings.CutSuffix`, `slices.Contains`, `errors.AsType[T]`, `new(expr)`, `min()`, and `max()` over manual index slicing, temporary pointer variables, or verbose loops.
 
 ---
 
