@@ -39,7 +39,7 @@ Always begin by running the helper script to gather complexity, duplication, and
 
 ### Phase 2: Targeted Code Inspection & Checklist Review
 
-1. Read [go-clean-code-checklist.md](./references/go-clean-code-checklist.md) to load the refactoring rules, Go 1.26 idioms, and SelfCloud invariants.
+1. Read [go-clean-code-checklist.md](./references/go-clean-code-checklist.md) to load the refactoring rules, Go 1.27 idioms, and SelfCloud invariants.
 2. Select the highest-signal hotspots from the scan output across the three core categories:
    - **Copy-Paste / Duplication (`dupl`, `goconst`)**: Repeated repository query blocks, duplicated handler utilities (e.g., identical base URL resolution or error responses across handlers), or repeated validation blocks.
    - **Cyclomatic & Cognitive Complexity (`gocyclo > 15`, `gocognit > 20`, `nestif >= 4`, `funlen`)**: Monolithic CLI dispatchers (`cmdUser`, `cmdServe`), deep `if/else` trees in HTTP/WebDAV handlers or auth middleware (`DualAuthMiddleware`, `GoogleCallbackHandler`, `UploadHandler`, `handleCopyDir`, `ReindexUser`).

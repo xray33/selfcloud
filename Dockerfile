@@ -17,9 +17,11 @@ RUN CGO_ENABLED=0 go build \
     -o /app/bin/selfcloud ./cmd/selfcloud
 
 # Final Runtime Stage (Go Backend Service)
-FROM alpine:3.20
+FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache --upgrade ca-certificates ca-certificates-bundle tzdata \
+    && update-ca-certificates \
     && addgroup -g 10001 -S selfcloud \
     && adduser -u 10001 -S selfcloud -G selfcloud
 

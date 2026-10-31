@@ -1,6 +1,6 @@
 module selfcloud
 
-go 1.26.5
+go 1.27.3
 
 require (
 	github.com/doug-martin/goqu/v9 v9.19.0
