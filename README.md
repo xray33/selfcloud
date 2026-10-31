@@ -35,7 +35,7 @@ It enables official **ownCloud Desktop Sync Clients**, **Mobile Apps**, and **We
 ## 🏗 Architecture & Tech Stack
 
 - **Backend**: Go 1.27 (Native `net/http` routing)
-- **Frontend**: React 19, TypeScript 5, Vite 6, Tailwind CSS v3, Lucide React (`web/`)
+- **Frontend**: React 19, TypeScript 7, Vite 8, Tailwind CSS v3, Lucide React (`web/`)
 - **Metadata Database**: MariaDB / MySQL (Vendor-agnostic SQL generation via `doug-martin/goqu/v9`)
 - **File Storage**: Local filesystem (`./data` or configured path)
 - **Logging**: Standard `log/slog` structured logging
