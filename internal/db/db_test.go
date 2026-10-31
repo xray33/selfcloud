@@ -18,9 +18,16 @@ func TestMigrations(t *testing.T) {
 	}
 	defer sqlDB.Close()
 
-	// Reset migration 5 record so Migrate runs it
-	_, _ = sqlDB.Exec("DELETE FROM schema_migrations WHERE version = 5")
 	if err := Migrate(sqlDB); err != nil {
 		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	// Reset migration 5 record under the migration lock so runMigrations exercises it safely
+	err = withMigrationLock(sqlDB, func() error {
+		_, _ = sqlDB.Exec("DELETE FROM schema_migrations WHERE version = 5")
+		return runMigrations(sqlDB)
+	})
+	if err != nil {
+		t.Fatalf("Re-running migration 5 failed: %v", err)
 	}
 }
