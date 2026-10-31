@@ -7,7 +7,7 @@ It provides a modern, fast file management Web UI (file browsing, breadcrumb nav
 ## 2. Tech Stack & Dependencies
 - **Framework**: React 19 + TypeScript 7
 - **Build Tool**: Vite 8
-- **Styling**: Tailwind CSS v3
+- **Styling**: Tailwind CSS v4
 - **Icons**: Lucide React
 - **HTTP Client**: Native `fetch` wrapper in `src/api/client.ts` with credentials (`credentials: 'include'` for HttpOnly session cookies)
 
@@ -18,13 +18,12 @@ web/
 ├── package.json            # npm dependencies & build scripts
 ├── vite.config.ts          # Vite config with API dev proxy to localhost:8080
 ├── tsconfig.json           # TypeScript compilation config
-├── tailwind.config.js      # Tailwind theme tokens & color palette
 ├── nginx.conf              # Nginx reverse proxy configuration for Web UI container
 ├── index.html              # Single Page Application entry HTML
 └── src/
     ├── main.tsx            # React DOM mounting entry point
     ├── App.tsx             # Root app router & auth initialization
-    ├── index.css           # Tailwind base & global styles
+    ├── index.css           # Tailwind v4 @theme tokens & global styles
     ├── types/              # TypeScript interfaces (User, NodeItem, Share)
     ├── api/                # API client modules (auth.ts, files.ts, shares.ts)
     ├── components/         # UI Components (Navbar, FileList, ActionToolbar, Modals)
