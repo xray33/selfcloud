@@ -262,8 +262,7 @@ func (h *WebDAVHandler) savePutBlob(w http.ResponseWriter, r *http.Request, user
 
 	size, err := h.storage.Write(user.Username, relPath, limitedBody)
 	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			audit.RecordFailure(r.Context(), "file_upload", relPath,
 				fmt.Sprintf("User %q upload failed: payload exceeds maximum allowed size of %s", user.Username, pathutil.FormatBytes(maxSize)),
 			)
@@ -959,8 +958,8 @@ func extractPaths(rawPath, username string) (basePath, relPath string) {
 	}
 
 	for _, p := range prefixes {
-		if strings.HasPrefix(rawPath, p) {
-			rel := strings.TrimPrefix(rawPath, p)
+		if after, ok := strings.CutPrefix(rawPath, p); ok {
+			rel := after
 			if rel == "" {
 				rel = "/"
 			}

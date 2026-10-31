@@ -194,12 +194,11 @@ func TestCreateShareHandler(t *testing.T) {
 	})
 
 	t.Run("Expired share returns 404 in PublicShareInfoHandler", func(t *testing.T) {
-		past := time.Now().Add(-1 * time.Hour)
 		shareRepo.shares["/expired.txt"] = &domain.Share{
 			Token:     "expired_token_123",
 			UserID:    user.ID,
 			Path:      "/expired.txt",
-			ExpiresAt: &past,
+			ExpiresAt: new(time.Now().Add(-1 * time.Hour)),
 			CreatedAt: time.Now().Add(-2 * time.Hour),
 		}
 		nodeRepo.nodes["/expired.txt"] = &domain.Node{

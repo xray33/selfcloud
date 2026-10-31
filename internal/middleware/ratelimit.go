@@ -90,10 +90,7 @@ func (rl *IPRateLimiter) Allow(ip string) (bool, time.Duration) {
 		return true, 0
 	}
 
-	retryAfter := rec.resetTime.Sub(now)
-	if retryAfter < time.Second {
-		retryAfter = time.Second
-	}
+	retryAfter := max(rec.resetTime.Sub(now), time.Second)
 	return false, retryAfter
 }
 
@@ -117,10 +114,7 @@ func (rl *IPRateLimiter) Check(ip string) (bool, time.Duration) {
 		return true, 0
 	}
 
-	retryAfter := rec.resetTime.Sub(now)
-	if retryAfter < time.Second {
-		retryAfter = time.Second
-	}
+	retryAfter := max(rec.resetTime.Sub(now), time.Second)
 	return false, retryAfter
 }
 

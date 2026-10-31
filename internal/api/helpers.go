@@ -25,7 +25,7 @@ func resolveBaseURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s", scheme, host)
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

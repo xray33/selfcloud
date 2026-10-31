@@ -109,7 +109,7 @@ func (h *FilesHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		audit.Record(r.Context(), "api_get_file_info", targetPath, fmt.Sprintf("User %q inspected file info for %q", user.Username, targetPath))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"node":  node,
 		"items": items,
 	})
@@ -297,7 +297,7 @@ func (h *FilesHandler) UploadHandler(w http.ResponseWriter, r *http.Request) {
 		audit.Record(r.Context(), "api_file_update", destPath, fmt.Sprintf("User %q updated file %q (%s)", user.Username, destPath, pathutil.FormatBytes(size)))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"node": node})
+	writeJSON(w, http.StatusOK, map[string]any{"node": node})
 }
 
 // MkdirHandler creates a new directory.
@@ -358,7 +358,7 @@ func (h *FilesHandler) MkdirHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	audit.Record(r.Context(), "api_mkdir", dirPath, fmt.Sprintf("User %q created directory %q", user.Username, dirPath))
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"node": node})
+	writeJSON(w, http.StatusCreated, map[string]any{"node": node})
 }
 
 func (h *FilesHandler) persistDirNode(ctx context.Context, user *domain.User, node *domain.Node) error {
@@ -711,4 +711,3 @@ func (h *FilesHandler) addFileToZip(ctx context.Context, username string, node *
 	_, err = io.Copy(writer, rc)
 	return err
 }
-

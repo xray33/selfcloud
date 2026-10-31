@@ -691,8 +691,8 @@ func buildMetricsHandler(cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := ""
 		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimPrefix(authHeader, "Bearer ")
+		if after, ok := strings.CutPrefix(authHeader, "Bearer "); ok {
+			token = after
 		} else if qToken := r.URL.Query().Get("token"); qToken != "" {
 			token = qToken
 		}

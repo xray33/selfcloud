@@ -483,7 +483,7 @@ func TestBasicAuthMiddleware_RateLimiting(t *testing.T) {
 
 		auth := BasicAuthMiddleware(userRepo, limiter)(dummyHandler)
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			req := httptest.NewRequest(http.MethodGet, "/remote.php/webdav", nil)
 			req.RemoteAddr = "192.0.2.77:1234"
 			req.SetBasicAuth("alice", "secret123")

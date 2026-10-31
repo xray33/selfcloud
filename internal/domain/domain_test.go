@@ -70,20 +70,18 @@ func TestShareIsExpired(t *testing.T) {
 	}
 
 	// 2. Share expired in the past
-	pastTime := now.Add(-1 * time.Hour)
 	expiredShare := &domain.Share{
 		Token:     "tok-past",
-		ExpiresAt: &pastTime,
+		ExpiresAt: new(now.Add(-1 * time.Hour)),
 	}
 	if !expiredShare.IsExpired() {
 		t.Errorf("share with past expires_at should be expired")
 	}
 
 	// 3. Share with expiration in the future
-	futureTime := now.Add(1 * time.Hour)
 	activeShare := &domain.Share{
 		Token:     "tok-future",
-		ExpiresAt: &futureTime,
+		ExpiresAt: new(now.Add(1 * time.Hour)),
 	}
 	if activeShare.IsExpired() {
 		t.Errorf("share with future expires_at should not be expired")

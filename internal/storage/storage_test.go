@@ -246,7 +246,7 @@ func TestLocalStorageConcurrentWrites(t *testing.T) {
 	relPath := "/data/parallel.txt"
 
 	done := make(chan error, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(idx int) {
 			content := bytes.Repeat([]byte{byte('A' + idx)}, 4096)
 			_, writeErr := s.Write(username, relPath, bytes.NewReader(content))
@@ -254,7 +254,7 @@ func TestLocalStorageConcurrentWrites(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if err := <-done; err != nil {
 			t.Errorf("concurrent write %d failed: %v", i, err)
 		}
@@ -272,4 +272,3 @@ func TestLocalStorageConcurrentWrites(t *testing.T) {
 		t.Errorf("expected file size 4096, got %d", len(buf))
 	}
 }
-

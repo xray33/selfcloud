@@ -128,11 +128,11 @@ func (h *SharesHandler) CreateShareHandler(w http.ResponseWriter, r *http.Reques
 
 	if isNew {
 		audit.Record(r.Context(), "api_create_share", cleanPath, fmt.Sprintf("User %q created public share link for %q", user.Username, cleanPath))
-		writeJSON(w, http.StatusCreated, map[string]interface{}{
+		writeJSON(w, http.StatusCreated, map[string]any{
 			"share": formatShareResponse(r, share),
 		})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"share": formatShareResponse(r, share),
 		})
 	}
@@ -162,7 +162,7 @@ func (h *SharesHandler) ListSharesHandler(w http.ResponseWriter, r *http.Request
 		res = append(res, formatShareResponse(r, s))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"shares": res,
 	})
 }
@@ -228,7 +228,7 @@ func (h *SharesHandler) PublicShareInfoHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"token":        share.Token,
 		"name":         path.Base(share.Path),
 		"path":         share.Path,
