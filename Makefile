@@ -84,13 +84,18 @@ ANSIBLE_USER ?=
 ANSIBLE_USER_FLAG := $(if $(ANSIBLE_USER),-u $(ANSIBLE_USER),)
 
 docker-export:
-	@mkdir -p /tmp/selfcloud-build
-	@if [ "$(GIT_DIRTY)" = "-dirty" ] || [ ! -f /tmp/selfcloud-build/selfcloud-$(IMAGE_TAG).tar.gz ]; then \
+	@set -e; \
+	mkdir -p /tmp/selfcloud-build; \
+	ARCHIVE="/tmp/selfcloud-build/selfcloud-$(IMAGE_TAG).tar.gz"; \
+	if [ "$(GIT_DIRTY)" = "-dirty" ] || [ ! -s "$$ARCHIVE" ]; then \
 		echo "Building and exporting images for tag $(IMAGE_TAG)..."; \
 		$(MAKE) docker-build; \
-		docker save $(BACKEND_IMAGE) $(WEB_IMAGE) | gzip -n > /tmp/selfcloud-build/selfcloud-$(IMAGE_TAG).tar.gz; \
+		rm -f "$$ARCHIVE" "$$ARCHIVE.tmp.tar" "$$ARCHIVE.tmp.tar.gz"; \
+		docker save -o "$$ARCHIVE.tmp.tar" $(BACKEND_IMAGE) $(WEB_IMAGE); \
+		gzip -n -f "$$ARCHIVE.tmp.tar"; \
+		mv "$$ARCHIVE.tmp.tar.gz" "$$ARCHIVE"; \
 	else \
-		echo "Images for $(IMAGE_TAG) already exported at /tmp/selfcloud-build/selfcloud-$(IMAGE_TAG).tar.gz (clean git commit, skipping build)"; \
+		echo "Images for $(IMAGE_TAG) already exported at $$ARCHIVE (clean git commit, skipping build)"; \
 	fi
 
 deploy-ansible: docker-export
