@@ -3,10 +3,10 @@ module selfcloud
 go 1.27.4
 
 require (
-	github.com/doug-martin/goqu/v9 v9.23.0
+	github.com/doug-martin/goqu/v9 v9.25.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/prometheus/client_golang v1.25.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 )
 
 require (
@@ -17,6 +17,6 @@ require (
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
