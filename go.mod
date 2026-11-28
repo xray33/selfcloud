@@ -3,7 +3,7 @@ module selfcloud
 go 1.27.4
 
 require (
-	github.com/doug-martin/goqu/v9 v9.26.0
+	github.com/doug-martin/goqu/v9 v9.27.0
 	github.com/go-sql-driver/mysql v1.10.2
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/crypto v0.59.0
